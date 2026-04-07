@@ -2,11 +2,12 @@ import SwiftUI
 import RealityKit
 import Combine
 
-// MARK: - RealityKit Avatar View
+// MARK: - AvatarModelView
+// Full-body view used on the avatar SELECTION screen.
+// Shows the complete character with the platform, autoRotate, and the
+// original wide camera — untouched from the original implementation.
+// AvatarRealityView (upper-body crop) is only used inside AvatarGamePanel.
 
-/// Displays a 3D avatar model using RealityKit with idle animation and interaction.
-/// Drop a `host_avatar.usdz` into the Xcode bundle to use a real model.
-/// Without one, a procedural placeholder character is shown.
 struct AvatarModelView: View {
     let modelName: String
     var allowsRotation: Bool = true
@@ -19,61 +20,39 @@ struct AvatarModelView: View {
 
     var body: some View {
         GeometryReader { geo in
-            // Guard against zero-size frames that cause NaN in RealityKit
             if geo.size.width > 1 && geo.size.height > 1 {
-                avatar3DContent
-                    .frame(width: geo.size.width, height: geo.size.height)
+                #if os(iOS) || os(visionOS)
+                Avatar3DContainer(
+                    modelName: modelName,
+                    rotationAngle: rotationAngle + dragOffset,
+                    showPlatform: showPlatform
+                )
+                .frame(width: geo.size.width, height: geo.size.height)
+                .gesture(
+                    allowsRotation
+                    ? DragGesture()
+                        .onChanged { value in dragOffset = Float(value.translation.width) * 0.01 }
+                        .onEnded   { _     in rotationAngle += dragOffset; dragOffset = 0 }
+                    : nil
+                )
+                #else
+                ZStack {
+                    RoundedRectangle(cornerRadius: 16).fill(Color.purple.opacity(0.15))
+                    Image(systemName: "person.fill").font(.system(size: 48)).foregroundColor(.purple.opacity(0.5))
+                }
+                #endif
             } else {
                 Color.clear
             }
         }
-        .onAppear {
-            if autoRotate { startIdleRotation() }
-        }
-        .onDisappear {
-            timer?.invalidate()
-            timer = nil
-        }
-    }
-
-    @ViewBuilder
-    private var avatar3DContent: some View {
-        #if os(iOS) || os(visionOS)
-        Avatar3DContainer(
-            modelName: modelName,
-            rotationAngle: rotationAngle + dragOffset,
-            showPlatform: showPlatform
-        )
-        .gesture(
-            allowsRotation
-            ? DragGesture()
-                .onChanged { value in
-                    dragOffset = Float(value.translation.width) * 0.01
-                }
-                .onEnded { _ in
-                    rotationAngle += dragOffset
-                    dragOffset = 0
-                }
-            : nil
-        )
-        #else
-        // macOS placeholder
-        ZStack {
-            RoundedRectangle(cornerRadius: 16)
-                .fill(Color.purple.opacity(0.15))
-            Image(systemName: "person.fill")
-                .font(.system(size: 48))
-                .foregroundColor(.purple.opacity(0.5))
-        }
-        #endif
+        .onAppear    { if autoRotate { startIdleRotation() } }
+        .onDisappear { timer?.invalidate(); timer = nil }
     }
 
     private func startIdleRotation() {
         guard timer == nil else { return }
         timer = Timer.scheduledTimer(withTimeInterval: 1.0 / 30.0, repeats: true) { _ in
-            Task { @MainActor in
-                rotationAngle += 0.005
-            }
+            Task { @MainActor in rotationAngle += 0.005 }
         }
     }
 }
