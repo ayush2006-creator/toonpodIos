@@ -21,7 +21,8 @@ struct AvatarGamePanel: View {
         ZStack(alignment: .bottom) {
 
             // ── 3D Avatar (upper body cropped) ─────────────────────
-            AvatarRealityView(modelName: avatarVM.modelName) { entity in
+            AvatarRealityView(modelName: avatarVM.modelName,
+                              yRotationDegrees: avatarVM.selectedAvatar.yRotationDegrees) { entity in
                 // Entity loaded – hand off to controllers
                 panelState.animController.start(with: entity)
                 panelState.lipSyncController.attach(to: entity)

@@ -1,41 +1,103 @@
 import RealityKit
 import Foundation
 
-// MARK: - AvatarAnimationController
+// MARK: - SkeletonResolver
 //
-// Works in two modes detected automatically on start():
+// Tries multiple known bone name variants so the same controller works with:
+//   • MetaHuman  (UE5 Mannequin body + FACIAL_C face rig)
+//   • Mixamo     (mixamorig: prefix)
+//   • Character Creator 4 (CC_Base_ prefix)
+//   • Generic / Biped (Bip01_ prefix)
 //
-//   RIGGED mode   — when named bones (Head, Jaw, RightArm…) are found in the
-//                   entity hierarchy. Drives individual bones.
-//
-//   BONELESS mode — when the model is a single static mesh (e.g. just "Geom").
-//                   Animates the whole entity with scale oscillation, position
-//                   bob, and orientation tilts that read as gestures from camera.
-//
-// Bone name constants below only matter in rigged mode; they are ignored
-// (with zero errors) when the model has no skeleton.
+// MetaHuman names are listed first so they match first on a MetaHuman USDZ.
 
-// MARK: - Bone name constants (edit to match your USDZ rig if it has bones)
+struct SkeletonResolver {
 
-enum BoneNames {
-    static let root          = "Root"
-    static let head          = "Head"
-    static let neck          = "Neck"
-    static let spine         = "Spine"
-    static let jaw           = "Jaw"          // used by AvatarLipSyncController too
+    static func find(_ candidates: [String], in root: Entity) -> Entity? {
+        for name in candidates {
+            if let e = root.findEntity(named: name) { return e }
+        }
+        return nil
+    }
 
-    static let rightArm      = "RightArm"
-    static let rightForeArm  = "RightForeArm"
-    static let rightHand     = "RightHand"
-    static let leftArm       = "LeftArm"
-    static let leftForeArm   = "LeftForeArm"
-    static let leftHand      = "LeftHand"
-    static let rightShoulder = "RightShoulder"
-    static let leftShoulder  = "LeftShoulder"
+    // Returns the first candidate name that actually exists in the hierarchy —
+    // useful for logging which rig was detected.
+    static func detectedName(_ candidates: [String], in root: Entity) -> String? {
+        candidates.first { root.findEntity(named: $0) != nil }
+    }
 
-    // Eyelid bones — silently ignored when absent
-    static let eyelidTopLeft  = "EyelidTopLeft"
-    static let eyelidTopRight = "EyelidTopRight"
+    // MARK: – Bone candidate lists
+
+    static let root      = ["root", "Root", "pelvis", "Hips",
+                            "mixamorig:Hips", "Bip01", "CC_Base_Hip"]
+
+    static let head      = ["head", "Head",
+                            "mixamorig:Head", "Bip01_Head", "CC_Base_Head",
+                            "FACIAL_C_FacialRoot"]          // MetaHuman face root
+
+    static let neck      = ["neck_01", "Neck",
+                            "mixamorig:Neck", "CC_Base_NeckTwist01"]
+
+    static let spine     = ["spine_03", "spine_02", "spine_01", "Spine",
+                            "mixamorig:Spine", "CC_Base_Spine02"]
+
+    // Face
+    static let jaw       = ["FACIAL_C_Jaw",                 // MetaHuman
+                            "jaw", "Jaw",
+                            "mixamorig:Jaw", "jaw_jnt",
+                            "CC_Base_JawRoot"]
+
+    static let eyelidTopRight = ["FACIAL_R_UpperLid",       // MetaHuman
+                                 "EyelidTopRight",
+                                 "mixamorig:RightEye",
+                                 "CC_Base_R_Eye"]
+
+    static let eyelidTopLeft  = ["FACIAL_L_UpperLid",       // MetaHuman
+                                 "EyelidTopLeft",
+                                 "mixamorig:LeftEye",
+                                 "CC_Base_L_Eye"]
+
+    // Arms – right
+    static let rightArm      = ["upperarm_r",               // MetaHuman / UE5 Mannequin
+                                "RightArm",
+                                "mixamorig:RightArm",
+                                "Bip01_R_UpperArm", "CC_Base_R_Upperarm"]
+
+    static let rightForeArm  = ["lowerarm_r",
+                                "RightForeArm",
+                                "mixamorig:RightForeArm",
+                                "Bip01_R_Forearm", "CC_Base_R_Forearm"]
+
+    static let rightHand     = ["hand_r",
+                                "RightHand",
+                                "mixamorig:RightHand",
+                                "Bip01_R_Hand", "CC_Base_R_Hand"]
+
+    static let rightShoulder = ["clavicle_r",               // MetaHuman
+                                "RightShoulder",
+                                "mixamorig:RightShoulder",
+                                "Bip01_R_Clavicle", "CC_Base_R_Clavicle"]
+
+    // Arms – left
+    static let leftArm       = ["upperarm_l",
+                                "LeftArm",
+                                "mixamorig:LeftArm",
+                                "Bip01_L_UpperArm", "CC_Base_L_Upperarm"]
+
+    static let leftForeArm   = ["lowerarm_l",
+                                "LeftForeArm",
+                                "mixamorig:LeftForeArm",
+                                "Bip01_L_Forearm", "CC_Base_L_Forearm"]
+
+    static let leftHand      = ["hand_l",
+                                "LeftHand",
+                                "mixamorig:LeftHand",
+                                "Bip01_L_Hand", "CC_Base_L_Hand"]
+
+    static let leftShoulder  = ["clavicle_l",
+                                "LeftShoulder",
+                                "mixamorig:LeftShoulder",
+                                "Bip01_L_Clavicle", "CC_Base_L_Clavicle"]
 }
 
 // MARK: - Gesture enum
@@ -56,43 +118,45 @@ final class AvatarAnimationController {
 
     private weak var entity: Entity?
 
-    // Timers
     private var idleTimer:    Timer?
     private var blinkTimer:   Timer?
     private var gestureTimer: Timer?
 
-    // Idle state
     private var idleTick: Double = 0
     private var isRunning = false
 
-    // ── Rigged-mode state ─────────────────────────────────────────
+    // ── Rigged-mode state ─────────────────────────────────────────────────
     private var hasBones = false
     private var headRestOrientation: simd_quatf = .init(ix: 0, iy: 0, iz: 0, r: 1)
 
-    // ── Boneless-mode state ───────────────────────────────────────
-    // Base transform captured once so animations can offset from it
-    private var basePosition:    SIMD3<Float>    = .zero
-    private var baseScale:       SIMD3<Float>    = [1, 1, 1]
-    private var baseOrientation: simd_quatf      = .init(ix: 0, iy: 0, iz: 0, r: 1)
+    // ── Boneless-mode state ───────────────────────────────────────────────
+    private var basePosition:    SIMD3<Float> = .zero
+    private var baseScale:       SIMD3<Float> = [1, 1, 1]
+    private var baseOrientation: simd_quatf   = .init(ix: 0, iy: 0, iz: 0, r: 1)
 
     // MARK: - Start / Stop
 
     func start(with entity: Entity) {
-        self.entity  = entity
-        isRunning    = true
+        self.entity = entity
+        isRunning   = true
 
-        // Detect rig type
-        hasBones = entity.findEntity(named: BoneNames.head) != nil
+        hasBones = SkeletonResolver.find(SkeletonResolver.head, in: entity) != nil
 
         if hasBones {
-            if let head = entity.findEntity(named: BoneNames.head) {
+            if let head = SkeletonResolver.find(SkeletonResolver.head, in: entity) {
                 headRestOrientation = head.orientation
             }
+            // Log which rig was auto-detected
+            let detectedHead = SkeletonResolver.detectedName(SkeletonResolver.head, in: entity) ?? "?"
+            let detectedJaw  = SkeletonResolver.detectedName(SkeletonResolver.jaw,  in: entity) ?? "none"
+            let detectedArm  = SkeletonResolver.detectedName(SkeletonResolver.rightArm, in: entity) ?? "none"
+            print("[AnimCtrl] ✅ Skeleton detected")
+            print("[AnimCtrl]   head='\(detectedHead)'  jaw='\(detectedJaw)'  rightArm='\(detectedArm)'")
         } else {
-            // Store the entity's resting transform so gestures can return to it
             basePosition    = entity.position
             baseScale       = entity.scale
             baseOrientation = entity.orientation
+            print("[AnimCtrl] ⚠️ No skeleton found — boneless mode. Check [AvatarReality] bone tree above.")
         }
 
         startIdleLoop()
@@ -134,45 +198,35 @@ final class AvatarAnimationController {
     private func tickIdle() {
         guard let entity, isRunning else { return }
         idleTick += 1.0 / 30.0
-
-        if hasBones {
-            tickIdleBoned(entity)
-        } else {
-            tickIdleBoneless(entity)
-        }
+        hasBones ? tickIdleBoned(entity) : tickIdleBoneless(entity)
     }
 
-    // Rigged: animate individual bones
+    // Rigged: subtle breathing via root scale + slow head bob
     private func tickIdleBoned(_ entity: Entity) {
         let breath = Float(sin(idleTick * 0.4 * .pi))
-        if let root = entity.findEntity(named: BoneNames.root) {
+        if let root = SkeletonResolver.find(SkeletonResolver.root, in: entity) {
             root.scale = [1.0 + breath * 0.012, 1.0 + breath * 0.008, 1.0 + breath * 0.012]
         }
         let bobZ = Float(sin(idleTick * 0.18 * .pi)) * 0.012
         let bobY = Float(sin(idleTick * 0.25 * .pi)) * 0.006
-        if let head = entity.findEntity(named: BoneNames.head) {
+        if let head = SkeletonResolver.find(SkeletonResolver.head, in: entity) {
             let tilt = simd_quatf(angle: bobZ, axis: [1, 0, 0])
             let roll = simd_quatf(angle: bobY, axis: [0, 0, 1])
             head.orientation = headRestOrientation * tilt * roll
         }
     }
 
-    // Boneless: only touch scale + position.y so gestures (orientation) and
-    // lip-sync (orientation) can run independently without fighting this loop.
+    // Boneless: only scale so gesture/lipsync can own orientation
     private func tickIdleBoneless(_ entity: Entity) {
-        // Subtle breathing — ±1.5% scale, slow 4-second cycle.
-        // Looks like a still model gently breathing rather than bouncing.
-        let breath = Float(sin(idleTick * 0.25 * .pi))  // 4 s cycle
+        let breath = Float(sin(idleTick * 0.25 * .pi))
         entity.scale = SIMD3<Float>(
             baseScale.x * (1.0 + breath * 0.015),
             baseScale.y * (1.0 + breath * 0.008),
             baseScale.z * (1.0 + breath * 0.015)
         )
-        // No position bob or orientation change here — both are owned by
-        // lip-sync and gesture systems respectively.
     }
 
-    // MARK: - Eye Blink (silently skipped on boneless models)
+    // MARK: - Eye Blink
 
     private func scheduleNextBlink() {
         guard isRunning else { return }
@@ -189,17 +243,18 @@ final class AvatarAnimationController {
     private func performBlink() {
         guard hasBones, let entity else { return }
         let angle: Float = .pi / 2.2
-        rotateBone(BoneNames.eyelidTopLeft,  in: entity, angle:  angle, axis: [1, 0, 0])
-        rotateBone(BoneNames.eyelidTopRight, in: entity, angle: -angle, axis: [1, 0, 0])
+        rotateBone(SkeletonResolver.eyelidTopLeft,  in: entity, angle:  angle, axis: [1, 0, 0])
+        rotateBone(SkeletonResolver.eyelidTopRight, in: entity, angle: -angle, axis: [1, 0, 0])
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.12) { [weak self, weak entity] in
             guard let self, let entity else { return }
-            self.rotateBone(BoneNames.eyelidTopLeft,  in: entity, angle: 0, axis: [1, 0, 0])
-            self.rotateBone(BoneNames.eyelidTopRight, in: entity, angle: 0, axis: [1, 0, 0])
+            self.rotateBone(SkeletonResolver.eyelidTopLeft,  in: entity, angle: 0, axis: [1, 0, 0])
+            self.rotateBone(SkeletonResolver.eyelidTopRight, in: entity, angle: 0, axis: [1, 0, 0])
         }
     }
 
     private func performBrowRaise() {
-        guard let head = entity?.findEntity(named: BoneNames.head) else { return }
+        guard let entity,
+              let head = SkeletonResolver.find(SkeletonResolver.head, in: entity) else { return }
         let rest = head.orientation
         let tilt = simd_quatf(angle: -0.08, axis: [1, 0, 0]) * rest
         head.move(to: Transform(scale: head.scale, rotation: tilt, translation: head.position),
@@ -216,12 +271,8 @@ final class AvatarAnimationController {
     func playGesture(_ gesture: AvatarGesture) {
         guard let entity, isRunning else { return }
         gestureTimer?.invalidate()
-
-        if hasBones {
-            playGestureBoned(gesture, entity: entity)
-        } else {
-            playGestureBoneless(gesture, entity: entity)
-        }
+        hasBones ? playGestureBoned(gesture, entity: entity)
+                 : playGestureBoneless(gesture, entity: entity)
     }
 
     // MARK: - Rigged gestures
@@ -238,12 +289,13 @@ final class AvatarAnimationController {
     }
 
     private func playWave(_ entity: Entity) {
-        guard let arm = entity.findEntity(named: BoneNames.rightArm),
-              let foreArm = entity.findEntity(named: BoneNames.rightForeArm) else { return }
+        guard let arm     = SkeletonResolver.find(SkeletonResolver.rightArm,     in: entity),
+              let foreArm = SkeletonResolver.find(SkeletonResolver.rightForeArm, in: entity) else { return }
         let restArm = arm.orientation; let restFore = foreArm.orientation
         arm.move(to: Transform(scale: arm.scale,
                                rotation: simd_quatf(angle: -.pi / 2.2, axis: [0, 0, 1]) * restArm,
-                               translation: arm.position), relativeTo: arm.parent, duration: 0.3)
+                               translation: arm.position),
+                 relativeTo: arm.parent, duration: 0.3)
         var delay = 0.3
         for angle: Float in [0.3, -0.3, 0.3, -0.3, 0.0] {
             let t = delay
@@ -257,63 +309,84 @@ final class AvatarAnimationController {
         }
         gestureTimer = Timer.scheduledTimer(withTimeInterval: delay + 0.3, repeats: false) { [weak arm, restArm] _ in
             arm?.move(to: Transform(scale: arm?.scale ?? [1,1,1], rotation: restArm,
-                                    translation: arm?.position ?? .zero), relativeTo: arm?.parent, duration: 0.3)
+                                    translation: arm?.position ?? .zero),
+                      relativeTo: arm?.parent, duration: 0.3)
         }
     }
 
     private func playPointUp(_ entity: Entity) {
-        guard let arm = entity.findEntity(named: BoneNames.rightArm) else { return }
+        guard let arm = SkeletonResolver.find(SkeletonResolver.rightArm, in: entity) else { return }
         let rest = arm.orientation
-        arm.move(to: Transform(scale: arm.scale, rotation: simd_quatf(angle: -.pi/1.8, axis:[0,0,1]) * rest,
-                               translation: arm.position), relativeTo: arm.parent, duration: 0.35)
+        arm.move(to: Transform(scale: arm.scale,
+                               rotation: simd_quatf(angle: -.pi/1.8, axis: [0,0,1]) * rest,
+                               translation: arm.position),
+                 relativeTo: arm.parent, duration: 0.35)
         restoreAfter(duration: 1.2, entity: arm, restOrientation: rest)
     }
 
     private func playThumbsUp(_ entity: Entity) {
-        guard let arm = entity.findEntity(named: BoneNames.rightArm) else { return }
+        guard let arm = SkeletonResolver.find(SkeletonResolver.rightArm, in: entity) else { return }
         let rest = arm.orientation
-        arm.move(to: Transform(scale: arm.scale, rotation: simd_quatf(angle: -.pi/3.0, axis:[0,0,1]) * rest,
-                               translation: arm.position), relativeTo: arm.parent, duration: 0.3)
+        arm.move(to: Transform(scale: arm.scale,
+                               rotation: simd_quatf(angle: -.pi/3.0, axis: [0,0,1]) * rest,
+                               translation: arm.position),
+                 relativeTo: arm.parent, duration: 0.3)
         restoreAfter(duration: 1.0, entity: arm, restOrientation: rest)
     }
 
     private func playShrug(_ entity: Entity) {
-        guard let r = entity.findEntity(named: BoneNames.rightShoulder),
-              let l = entity.findEntity(named: BoneNames.leftShoulder) else { return }
+        guard let r = SkeletonResolver.find(SkeletonResolver.rightShoulder, in: entity),
+              let l = SkeletonResolver.find(SkeletonResolver.leftShoulder,  in: entity) else { return }
         let rR = r.orientation; let lR = l.orientation
-        r.move(to: Transform(scale: r.scale, rotation: simd_quatf(angle: -.pi/6, axis:[0,0,1]) * rR, translation: r.position), relativeTo: r.parent, duration: 0.3)
-        l.move(to: Transform(scale: l.scale, rotation: simd_quatf(angle:  .pi/6, axis:[0,0,1]) * lR, translation: l.position), relativeTo: l.parent, duration: 0.3)
+        r.move(to: Transform(scale: r.scale, rotation: simd_quatf(angle: -.pi/6, axis: [0,0,1]) * rR,
+                             translation: r.position), relativeTo: r.parent, duration: 0.3)
+        l.move(to: Transform(scale: l.scale, rotation: simd_quatf(angle:  .pi/6, axis: [0,0,1]) * lR,
+                             translation: l.position), relativeTo: l.parent, duration: 0.3)
         gestureTimer = Timer.scheduledTimer(withTimeInterval: 1.0, repeats: false) { [weak r, weak l, rR, lR] _ in
             Task { @MainActor in
-                r?.move(to: Transform(scale: r?.scale ?? [1,1,1], rotation: rR, translation: r?.position ?? .zero), relativeTo: r?.parent, duration: 0.3)
-                l?.move(to: Transform(scale: l?.scale ?? [1,1,1], rotation: lR, translation: l?.position ?? .zero), relativeTo: l?.parent, duration: 0.3)
+                r?.move(to: Transform(scale: r?.scale ?? [1,1,1], rotation: rR,
+                                      translation: r?.position ?? .zero), relativeTo: r?.parent, duration: 0.3)
+                l?.move(to: Transform(scale: l?.scale ?? [1,1,1], rotation: lR,
+                                      translation: l?.position ?? .zero), relativeTo: l?.parent, duration: 0.3)
             }
         }
     }
 
     private func playThinkingRub(_ entity: Entity) {
-        guard let arm = entity.findEntity(named: BoneNames.rightArm),
-              let fore = entity.findEntity(named: BoneNames.rightForeArm) else { return }
+        guard let arm  = SkeletonResolver.find(SkeletonResolver.rightArm,     in: entity),
+              let fore = SkeletonResolver.find(SkeletonResolver.rightForeArm, in: entity) else { return }
         let rA = arm.orientation; let rF = fore.orientation
-        arm.move(to:  Transform(scale: arm.scale,  rotation: simd_quatf(angle: -.pi/3.5, axis:[0,0,1]) * rA,  translation: arm.position),  relativeTo: arm.parent,  duration: 0.35)
-        fore.move(to: Transform(scale: fore.scale, rotation: simd_quatf(angle: -.pi/2.4, axis:[0,1,0]) * rF,  translation: fore.position), relativeTo: fore.parent, duration: 0.35)
+        arm.move(to:  Transform(scale: arm.scale,  rotation: simd_quatf(angle: -.pi/3.5, axis: [0,0,1]) * rA,
+                                translation: arm.position),  relativeTo: arm.parent,  duration: 0.35)
+        fore.move(to: Transform(scale: fore.scale, rotation: simd_quatf(angle: -.pi/2.4, axis: [0,1,0]) * rF,
+                                translation: fore.position), relativeTo: fore.parent, duration: 0.35)
         restoreAfter(duration: 1.8, entity: arm,  restOrientation: rA)
         restoreAfter(duration: 1.8, entity: fore, restOrientation: rF)
     }
 
     private func playClap(_ entity: Entity) {
-        guard let rArm = entity.findEntity(named: BoneNames.rightArm),
-              let lArm = entity.findEntity(named: BoneNames.leftArm) else { return }
+        guard let rArm = SkeletonResolver.find(SkeletonResolver.rightArm, in: entity),
+              let lArm = SkeletonResolver.find(SkeletonResolver.leftArm,  in: entity) else { return }
         let rR = rArm.orientation; let lR = lArm.orientation
         for i in 0..<3 {
             let t = Double(i) * 0.35; let a = t + 0.18
             DispatchQueue.main.asyncAfter(deadline: .now() + t) { [weak rArm, weak lArm, rR, lR] in
-                rArm?.move(to: Transform(scale: rArm?.scale ?? [1,1,1], rotation: simd_quatf(angle: -.pi/4, axis:[0,0,1]) * rR, translation: rArm?.position ?? .zero), relativeTo: rArm?.parent, duration: 0.15)
-                lArm?.move(to: Transform(scale: lArm?.scale ?? [1,1,1], rotation: simd_quatf(angle:  .pi/4, axis:[0,0,1]) * lR, translation: lArm?.position ?? .zero), relativeTo: lArm?.parent, duration: 0.15)
+                rArm?.move(to: Transform(scale: rArm?.scale ?? [1,1,1],
+                                         rotation: simd_quatf(angle: -.pi/4, axis: [0,0,1]) * rR,
+                                         translation: rArm?.position ?? .zero),
+                           relativeTo: rArm?.parent, duration: 0.15)
+                lArm?.move(to: Transform(scale: lArm?.scale ?? [1,1,1],
+                                         rotation: simd_quatf(angle:  .pi/4, axis: [0,0,1]) * lR,
+                                         translation: lArm?.position ?? .zero),
+                           relativeTo: lArm?.parent, duration: 0.15)
             }
             DispatchQueue.main.asyncAfter(deadline: .now() + a) { [weak rArm, weak lArm, rR, lR] in
-                rArm?.move(to: Transform(scale: rArm?.scale ?? [1,1,1], rotation: rR, translation: rArm?.position ?? .zero), relativeTo: rArm?.parent, duration: 0.15)
-                lArm?.move(to: Transform(scale: lArm?.scale ?? [1,1,1], rotation: lR, translation: lArm?.position ?? .zero), relativeTo: lArm?.parent, duration: 0.15)
+                rArm?.move(to: Transform(scale: rArm?.scale ?? [1,1,1], rotation: rR,
+                                         translation: rArm?.position ?? .zero),
+                           relativeTo: rArm?.parent, duration: 0.15)
+                lArm?.move(to: Transform(scale: lArm?.scale ?? [1,1,1], rotation: lR,
+                                         translation: lArm?.position ?? .zero),
+                           relativeTo: lArm?.parent, duration: 0.15)
             }
         }
     }
@@ -322,42 +395,33 @@ final class AvatarAnimationController {
 
     private func playGestureBoneless(_ gesture: AvatarGesture, entity: Entity) {
         let rest = baseOrientation
-        // Gestures only touch `orientation` — idle loop uses scale+position,
-        // so there is no frame-by-frame conflict.
-        var angle:    Float          = 0
-        var axis:     SIMD3<Float>   = [0, 1, 0]
-        var holdSecs: Double         = 1.2
+        var angle:    Float        = 0
+        var axis:     SIMD3<Float> = [0, 1, 0]
+        var holdSecs: Double       = 1.2
 
         switch gesture {
         case .wave:
-            animateRockBoneless(entity: entity, axis: [0, 0, 1], peakAngle: 0.22, reps: 3)
-            return
+            animateRockBoneless(entity: entity, axis: [0, 0, 1], peakAngle: 0.22, reps: 3); return
         case .pointUp:
-            angle = -0.18; axis = [1, 0, 0]; holdSecs = 1.4   // lean back ~10°
+            angle = -0.18; axis = [1, 0, 0]; holdSecs = 1.4
         case .thumbsUp:
-            angle =  0.15; axis = [1, 0, 0]; holdSecs = 1.2   // lean forward ~9°
+            angle =  0.15; axis = [1, 0, 0]; holdSecs = 1.2
         case .shrug:
-            animateRockBoneless(entity: entity, axis: [0, 0, 1], peakAngle: 0.10, reps: 1)
-            return
+            animateRockBoneless(entity: entity, axis: [0, 0, 1], peakAngle: 0.10, reps: 1); return
         case .thinkingRub:
-            angle =  0.18; axis = [0, 0, 1]; holdSecs = 1.8   // tilt right ~10°
+            angle =  0.18; axis = [0, 0, 1]; holdSecs = 1.8
         case .clap:
-            animateRockBoneless(entity: entity, axis: [1, 0, 0], peakAngle: 0.12, reps: 3)
-            return
+            animateRockBoneless(entity: entity, axis: [1, 0, 0], peakAngle: 0.12, reps: 3); return
         }
 
         let target = simd_quatf(angle: angle, axis: axis) * rest
-        entity.move(
-            to: Transform(scale: entity.scale, rotation: target, translation: entity.position),
-            relativeTo: entity.parent, duration: 0.35, timingFunction: .easeInOut
-        )
+        entity.move(to: Transform(scale: entity.scale, rotation: target, translation: entity.position),
+                    relativeTo: entity.parent, duration: 0.35, timingFunction: .easeInOut)
         gestureTimer = Timer.scheduledTimer(withTimeInterval: holdSecs, repeats: false) { [weak self, weak entity, rest] _ in
             Task { @MainActor in
-                entity?.move(
-                    to: Transform(scale: entity?.scale ?? [1,1,1], rotation: rest,
-                                  translation: entity?.position ?? .zero),
-                    relativeTo: entity?.parent, duration: 0.35, timingFunction: .easeOut
-                )
+                entity?.move(to: Transform(scale: entity?.scale ?? [1,1,1], rotation: rest,
+                                           translation: entity?.position ?? .zero),
+                             relativeTo: entity?.parent, duration: 0.35, timingFunction: .easeOut)
                 self?.gestureTimer = nil
             }
         }
@@ -368,32 +432,27 @@ final class AvatarAnimationController {
         var delay: Double = 0
         let step:  Double = 0.25
         for i in 0..<(reps * 2) {
-            let d = delay
-            let a: Float = (i % 2 == 0) ? peakAngle : -peakAngle
+            let d = delay; let a: Float = (i % 2 == 0) ? peakAngle : -peakAngle
             DispatchQueue.main.asyncAfter(deadline: .now() + d) { [weak entity, rest] in
                 let q = simd_quatf(angle: a, axis: axis) * rest
-                entity?.move(
-                    to: Transform(scale: entity?.scale ?? [1,1,1], rotation: q,
-                                  translation: entity?.position ?? .zero),
-                    relativeTo: entity?.parent, duration: step, timingFunction: .easeInOut
-                )
+                entity?.move(to: Transform(scale: entity?.scale ?? [1,1,1], rotation: q,
+                                           translation: entity?.position ?? .zero),
+                             relativeTo: entity?.parent, duration: step, timingFunction: .easeInOut)
             }
             delay += step
         }
         DispatchQueue.main.asyncAfter(deadline: .now() + delay + 0.1) { [weak entity, rest] in
-            entity?.move(
-                to: Transform(scale: entity?.scale ?? [1,1,1], rotation: rest,
-                              translation: entity?.position ?? .zero),
-                relativeTo: entity?.parent, duration: 0.3, timingFunction: .easeOut
-            )
+            entity?.move(to: Transform(scale: entity?.scale ?? [1,1,1], rotation: rest,
+                                       translation: entity?.position ?? .zero),
+                         relativeTo: entity?.parent, duration: 0.3, timingFunction: .easeOut)
         }
     }
 
     // MARK: - Helpers
 
-    private func rotateBone(_ name: String, in root: Entity, angle: Float, axis: SIMD3<Float>) {
-        guard let bone = root.findEntity(named: name) else { return }
-        let rest = bone.orientation
+    private func rotateBone(_ candidates: [String], in root: Entity, angle: Float, axis: SIMD3<Float>) {
+        guard let bone = SkeletonResolver.find(candidates, in: root) else { return }
+        let rest   = bone.orientation
         let target = angle == 0 ? simd_quatf(ix: 0, iy: 0, iz: 0, r: 1)
                                 : simd_quatf(angle: angle, axis: axis) * rest
         bone.move(to: Transform(scale: bone.scale, rotation: target, translation: bone.position),

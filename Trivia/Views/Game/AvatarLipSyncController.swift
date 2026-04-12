@@ -5,10 +5,10 @@ import Foundation
 //
 // Drives mouth animation in sync with TTS audio.
 //
-// RIGGED mode   — rotates the Jaw bone (BoneNames.jaw) by openness × maxJawAngle.
+// RIGGED mode   — rotates the jaw bone found via SkeletonResolver.
+//                 Works with MetaHuman (FACIAL_C_Jaw), Mixamo, CC4, and generic rigs.
 // BONELESS mode — drives a rapid pitch oscillation on the whole entity that
-//                 visually reads as talking from the game camera distance.
-//                 Uses a separate `lipTick` so it doesn't fight the idle loop.
+//                 reads as talking from the game camera distance.
 //
 // Two timing paths:
 //   1. Word-timing  — AudioService.currentWordTimings (server timestamps)
@@ -39,14 +39,20 @@ final class AvatarLipSyncController {
     // MARK: - Attach
 
     func attach(to entity: Entity) {
-        self.entity      = entity
-        hasJaw           = entity.findEntity(named: BoneNames.jaw) != nil
-        baseOrientation  = entity.orientation
+        self.entity     = entity
+        baseOrientation = entity.orientation
 
-        if hasJaw, let jaw = entity.findEntity(named: BoneNames.jaw) {
-            jawRestOrientation = jaw.orientation
+        if let _ = SkeletonResolver.find(SkeletonResolver.jaw, in: entity) {
+            hasJaw = true
+            if let jaw = SkeletonResolver.find(SkeletonResolver.jaw, in: entity) {
+                jawRestOrientation = jaw.orientation
+            }
+            let detectedName = SkeletonResolver.detectedName(SkeletonResolver.jaw, in: entity) ?? "?"
+            print("[LipSync] ✅ Jaw bone found: '\(detectedName)'")
+        } else {
+            hasJaw = false
+            print("[LipSync] ⚠️ No jaw bone found — boneless lip-sync active")
         }
-        print("[LipSync] hasJaw=\(hasJaw) for entity '\(entity.name)'")
     }
 
     // MARK: - Speak
@@ -66,7 +72,7 @@ final class AvatarLipSyncController {
 
     func stopLipSync() {
         lerpTimer?.invalidate()
-        lerpTimer = nil
+        lerpTimer      = nil
         targetOpenness = 0
         lipTick        = 0
     }
@@ -139,16 +145,16 @@ final class AvatarLipSyncController {
     private static func opennessForCharacter(_ ch: Character) -> Float {
         let c = ch.lowercased().first ?? ch
         switch c {
-        case "a", "e":                  return 0.90
+        case "a", "e":                   return 0.90
         case "i":                        return 0.55
         case "o":                        return 0.70
         case "u", "w":                   return 0.35
         case "b", "m", "p":              return 0.00
-        case "t", "d", "n", "l":        return 0.30
+        case "t", "d", "n", "l":         return 0.30
         case "f", "v":                   return 0.15
         case "s", "z":                   return 0.20
         case "r":                        return 0.25
-        case "k", "g", "h":             return 0.40
+        case "k", "g", "h":              return 0.40
         case " ", ".", ",", "!", "?":    return 0.00
         default:                         return 0.15
         }
@@ -157,16 +163,15 @@ final class AvatarLipSyncController {
     // MARK: - Jaw bone application (rigged)
 
     private func applyJawRotation(entity: Entity) {
-        guard let jaw = entity.findEntity(named: BoneNames.jaw) else { return }
-        let angle  = currentOpenness * maxJawAngle
+        guard let jaw = SkeletonResolver.find(SkeletonResolver.jaw, in: entity) else { return }
+        let angle = currentOpenness * maxJawAngle
         jaw.orientation = simd_quatf(angle: angle, axis: [1, 0, 0]) * jawRestOrientation
     }
 
     // MARK: - Boneless lip-sync application
 
-    // Boneless lip-sync: drives a rapid pitch oscillation proportional to openness.
-    // Idle loop only touches entity.scale and entity.position, so we can safely
-    // own entity.orientation here without frame conflicts.
+    // Drives a rapid pitch oscillation proportional to openness.
+    // Idle loop only touches entity.scale so orientation is safe to own here.
     private func applyBonelessLipSync(entity: Entity) {
         if currentOpenness < 0.02 {
             entity.orientation = baseOrientation
@@ -174,8 +179,7 @@ final class AvatarLipSyncController {
             return
         }
         lipTick += 1.0 / 30.0
-        // Subtle 6 Hz pitch micro-movement — reads as talking from game camera distance.
-        // Keep amplitude low (0.04 rad ≈ 2.3°) so it looks intentional, not glitchy.
+        // 6 Hz pitch micro-movement — reads as talking from game camera distance.
         let wobble = Float(sin(lipTick * 6.0 * .pi)) * currentOpenness * 0.04
         entity.orientation = simd_quatf(angle: wobble, axis: [1, 0, 0]) * baseOrientation
     }

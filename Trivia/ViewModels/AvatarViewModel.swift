@@ -10,6 +10,9 @@ struct AvatarDefinition: Identifiable {
     let modelFileName: String
     let voiceId: String
     let available: AvatarAvailability
+    /// Y-axis rotation in degrees applied after load to correct facing direction.
+    /// 0 = default (faces +Z toward camera). Try 180 if model faces away.
+    let yRotationDegrees: Float
 
     enum AvatarAvailability {
         case everyone
@@ -25,7 +28,8 @@ let appAvatars: [AvatarDefinition] = [
         personality: "Bubbly, witty, and always ready with a fun fact. Keeps the energy high and celebrates every answer.",
         modelFileName: "female_adult_001",
         voiceId: "nova",
-        available: .everyone
+        available: .everyone,
+        yRotationDegrees: 0
     ),
     AvatarDefinition(
         id: "nova",
@@ -33,7 +37,8 @@ let appAvatars: [AvatarDefinition] = [
         personality: "Cool and futuristic. Drops knowledge with sleek confidence and a dash of sci-fi flair.",
         modelFileName: "real_female",
         voiceId: "shimmer",
-        available: .everyone
+        available: .everyone,
+        yRotationDegrees: 180   // most online USDZ exports face -Z (away from camera); flip to face viewer
     ),
     AvatarDefinition(
         id: "rex",
@@ -41,7 +46,8 @@ let appAvatars: [AvatarDefinition] = [
         personality: "Bold and competitive. Brings sports-announcer energy and isn't afraid to tease you.",
         modelFileName: "Business_Male_01",
         voiceId: "onyx",
-        available: .everyone
+        available: .everyone,
+        yRotationDegrees: 0
     ),
     AvatarDefinition(
         id: "sage",
@@ -49,7 +55,8 @@ let appAvatars: [AvatarDefinition] = [
         personality: "Calm and wise. Explains answers like a favorite teacher with endless patience.",
         modelFileName: "",
         voiceId: "alloy",
-        available: .comingSoon
+        available: .comingSoon,
+        yRotationDegrees: 0
     ),
 ]
 

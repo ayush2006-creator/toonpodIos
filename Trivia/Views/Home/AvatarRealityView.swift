@@ -12,6 +12,8 @@ import Combine
 
 struct AvatarRealityView: View {
     let modelName: String
+    /// Y-axis rotation in degrees to apply after load (corrects facing direction).
+    var yRotationDegrees: Float = 0
     /// Receives the loaded entity so animation / lip-sync controllers can grab it
     var onEntityLoaded: ((Entity) -> Void)?
 
@@ -21,6 +23,7 @@ struct AvatarRealityView: View {
                 #if os(iOS) || os(visionOS)
                 AvatarRealityContainer(
                     modelName: modelName,
+                    yRotationDegrees: yRotationDegrees,
                     onEntityLoaded: onEntityLoaded
                 )
                 .frame(width: geo.size.width, height: geo.size.height)
@@ -44,6 +47,7 @@ struct AvatarRealityView: View {
 #if os(iOS) || os(visionOS)
 struct AvatarRealityContainer: UIViewRepresentable {
     let modelName: String
+    var yRotationDegrees: Float = 0
     var onEntityLoaded: ((Entity) -> Void)?
 
     func makeUIView(context: Context) -> ARView {
@@ -137,6 +141,13 @@ struct AvatarRealityContainer: UIViewRepresentable {
                     let scaledBounds = entity.visualBounds(relativeTo: nil)
                     entity.position.y = -scaledBounds.min.y
 
+                    // Apply per-model facing correction BEFORE handing entity to controllers
+                    // so their captured baseOrientation already reflects the corrected pose.
+                    if yRotationDegrees != 0 {
+                        entity.orientation = simd_quatf(angle: yRotationDegrees * .pi / 180, axis: [0, 1, 0])
+                        print("[AvatarReality] Applied \(yRotationDegrees)° Y-rotation to '\(modelName)'")
+                    }
+
                     entity.generateCollisionShapes(recursive: true)
                     anchor.addChild(entity)
                     coordinator.modelEntity = entity
@@ -147,8 +158,6 @@ struct AvatarRealityContainer: UIViewRepresentable {
                     }
 
                     // ── Print bone/entity names for debugging ─────────────
-                    // Check the Xcode console after launch — copy the jaw bone
-                    // name into BoneNames.jaw in AvatarAnimationController.swift
                     print("[AvatarReality] '\'\(modelName)\'' entity tree:")
                     Self.printEntityTree(entity, indent: 0)
                     // ─────────────────────────────────────────────────────
