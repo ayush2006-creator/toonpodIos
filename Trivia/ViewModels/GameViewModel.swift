@@ -1,6 +1,14 @@
 import Foundation
 import SwiftUI
 
+// MARK: - Party Score Multiplier
+
+/// Active score multiplier for the next N questions (awarded by Grid Reveal).
+struct PartyScoreMultiplier {
+    var questionsLeft: Int
+    var factor: Double
+}
+
 @MainActor
 class GameViewModel: ObservableObject {
     // MARK: - Published State
@@ -21,10 +29,20 @@ class GameViewModel: ObservableObject {
     @Published var partyMode: Bool = false
     @Published var selectedAvatarId: String = "trixie"
 
+    // Party mode scoring
+    /// Active score multiplier from a Grid Reveal cell (nil = no active multiplier).
+    @Published var partyScoreMultiplier: PartyScoreMultiplier?
+    /// A bonus question displayed during a special round (e.g. Grid Reveal 'question' cell).
+    @Published var specialRoundQuestion: Question?
+    /// Active daily login streak score multiplier (1.0 = no bonus).
+    @Published var loginStreakMultiplier: Double = 1.0
+
     @Published var showQuestion: Bool = true
     @Published var showFeedback: Bool = false
     @Published var feedbackData: FeedbackData?
     @Published var answerRevealed: Bool = false
+    /// The answer text selected by voice input — used to highlight the matching button.
+    @Published var voiceSelectedAnswer: String?
     @Published var hintVisible: Bool = false
     @Published var hintText: String = ""
     @Published var fiftyEliminated: [Int] = []
@@ -112,6 +130,8 @@ class GameViewModel: ObservableObject {
         wipeoutSelected = []
         frozenElapsed = nil
         elapsedTime = 0
+        partyScoreMultiplier = nil
+        specialRoundQuestion = nil
         _ = stopTimer()
     }
 
@@ -200,6 +220,7 @@ class GameViewModel: ObservableObject {
         var prizeWon = 0
         var speedBon = 0
         var streakBon = 0
+        var loginStreakBon = 0
 
         if isCorrect {
             if let override = options.overridePrize {
@@ -214,13 +235,23 @@ class GameViewModel: ObservableObject {
                 speedBon = ScoringService.calcSpeedBonus(prize: prizeWon, elapsed: elapsed)
             }
             streakBon = ScoringService.calcStreakBonus(prize: prizeWon, streak: streak)
-            bonusPool += speedBon + streakBon
+            loginStreakBon = ScoringService.calcLoginStreakBonus(prize: prizeWon, multiplier: loginStreakMultiplier)
+            bonusPool += speedBon + streakBon + loginStreakBon
         } else {
             streak = 0
         }
 
-        let totalPrize = prizeWon + speedBon + streakBon
+        let totalPrize = prizeWon + speedBon + streakBon + loginStreakBon
         totalWinnings = baseScore + bonusPool
+
+        // In party mode, apply the active score multiplier to the winning scorer's prize
+        // (mirrors web's `effectivePrize = mul ? totalPrize * mul.factor : totalPrize`).
+        // Note: full party score tracking (partyScores dict) is handled by the party
+        // orchestrator; this just decrements the multiplier lifetime counter.
+        if partyMode, let mul = partyScoreMultiplier, isCorrect {
+            let left = mul.questionsLeft - 1
+            partyScoreMultiplier = left > 0 ? PartyScoreMultiplier(questionsLeft: left, factor: mul.factor) : nil
+        }
 
         let result = GameResult(
             correct: isCorrect,
@@ -228,6 +259,7 @@ class GameViewModel: ObservableObject {
             basePrize: prizeWon,
             speedBonus: speedBon,
             streakBonus: streakBon,
+            loginStreakBonus: loginStreakBon,
             timeTaken: elapsed,
             type: gameData[qIdx].type,
             position: gameData[qIdx].position,
@@ -245,6 +277,7 @@ class GameViewModel: ObservableObject {
             totalPrize: totalPrize,
             speedBonus: speedBon,
             streakBonus: streakBon,
+            loginStreakBonus: loginStreakBon,
             fact: fact,
             elapsed: elapsed
         )
@@ -258,6 +291,7 @@ class GameViewModel: ObservableObject {
         hintVisible = false
         hintText = ""
         answerRevealed = false
+        voiceSelectedAnswer = nil
     }
 
     func showFeedbackUI(data: FeedbackData) {
@@ -277,6 +311,7 @@ class GameViewModel: ObservableObject {
         lightningCorrect = 0
         lightningResults = []
         answerRevealed = false
+        voiceSelectedAnswer = nil
     }
 
     func revealAnswer() {
@@ -337,6 +372,22 @@ class GameViewModel: ObservableObject {
     func replaceCurrentQuestion(_ question: Question) {
         guard currentQ < gameData.count else { return }
         gameData[currentQ] = question
+    }
+
+    // MARK: - Party Score Multiplier Helpers
+
+    func setPartyScoreMultiplier(_ multiplier: PartyScoreMultiplier?) {
+        partyScoreMultiplier = multiplier
+    }
+
+    func decrementMultiplier() {
+        guard let mul = partyScoreMultiplier else { return }
+        let left = mul.questionsLeft - 1
+        partyScoreMultiplier = left > 0 ? PartyScoreMultiplier(questionsLeft: left, factor: mul.factor) : nil
+    }
+
+    func setSpecialRoundQuestion(_ question: Question?) {
+        specialRoundQuestion = question
     }
 
     // MARK: - Game Completion

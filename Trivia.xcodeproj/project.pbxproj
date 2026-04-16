@@ -269,6 +269,7 @@
 				CODE_SIGN_ENTITLEMENTS = Trivia/Trivia.entitlements;
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = 4B85CPSF3Y;
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_KEY_NSMicrophoneUsageDescription = "ToonTrivia needs microphone access for voice answers during gameplay.";
@@ -309,6 +310,7 @@
 				CODE_SIGN_ENTITLEMENTS = Trivia/Trivia.entitlements;
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = 4B85CPSF3Y;
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_KEY_NSMicrophoneUsageDescription = "ToonTrivia needs microphone access for voice answers during gameplay.";

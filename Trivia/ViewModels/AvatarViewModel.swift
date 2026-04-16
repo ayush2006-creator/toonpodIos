@@ -234,6 +234,9 @@ class AvatarViewModel: ObservableObject {
         emotion = .thinking
         let text = Dialogue.formatQuestion(question, number: number, prize: prize)
         await speakAloud(text)
+        // Clear the echo-word cache so the user's answer words (e.g. "before",
+        // "after") aren't blocked just because they appeared in the question.
+        AudioService.shared.clearAvatarWords()
         gamePhase = .waitingForAnswer
         emotion = .neutral
     }

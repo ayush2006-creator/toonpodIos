@@ -13,18 +13,21 @@ struct QuestionRenderer: View {
                 question: question,
                 revealed: gameVM.answerRevealed,
                 fiftyEliminated: gameVM.fiftyEliminated,
+                voiceSelected: gameVM.voiceSelectedAnswer,
                 onAnswer: onAnswer
             )
         case .whichIs:
             WhichIsRenderer(
                 question: question,
                 revealed: gameVM.answerRevealed,
+                voiceSelected: gameVM.voiceSelectedAnswer,
                 onAnswer: onAnswer
             )
         case .beforeAfterBinary:
             BeforeAfterRenderer(
                 question: question,
                 revealed: gameVM.answerRevealed,
+                voiceSelected: gameVM.voiceSelectedAnswer,
                 onAnswer: onAnswer
             )
         case .oddOneOut:
@@ -32,6 +35,7 @@ struct QuestionRenderer: View {
                 question: question,
                 revealed: gameVM.answerRevealed,
                 fiftyEliminated: gameVM.fiftyEliminated,
+                voiceSelected: gameVM.voiceSelectedAnswer,
                 onAnswer: onAnswer
             )
         case .lightning:
@@ -55,6 +59,8 @@ struct QuestionRenderer: View {
         case .fill4th:
             Fill4thRenderer(
                 question: question,
+                revealed: gameVM.answerRevealed,
+                voiceAnswer: gameVM.voiceSelectedAnswer,
                 onAnswer: onAnswer
             )
         case .closestNumber:
@@ -77,6 +83,11 @@ struct QuestionRenderer: View {
             PictureChoiceRenderer(
                 question: question,
                 revealed: gameVM.answerRevealed,
+                onAnswer: onAnswer
+            )
+        case .elimination:
+            EliminationRenderer(
+                question: question,
                 onAnswer: onAnswer
             )
         }

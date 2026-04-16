@@ -1,7 +1,7 @@
 import Foundation
 
 enum AppConstants {
-    static let appVersion = "v41"
+    static let appVersion = "v301"
     static let serverURL = "https://toonpod-trivia.onrender.com"
 
     static let prizeLadder: [Int] = [
@@ -33,8 +33,43 @@ enum AppConstants {
         return Int(ceil(Double(total) / 2.0))
     }
 
-    static let adBreakQuestions: [Int] = [4, 9, 13]
+    static let adBreakQuestions: [Int] = [4, 9]
+    static let postQuestionAdBreaks: [Int] = [13]
     static let binaryQuestionTypes: [QuestionType] = [.whichIs, .beforeAfterBinary]
+
+    // MARK: - Party Mode
+
+    /// Prize ladder for party mode (flat amounts per question position).
+    /// Single-player mode uses prizeLadder instead.
+    static let partyPrizeLadder: [Int] = [
+        100_000, 100_000, 100_000,  // Q1–3: Fast Start
+        150_000,                    // Q4: Hot Seat Showdown
+        100_000, 150_000,           // Q5–6: Auction
+        100_000,                    // Q7: Wipeout
+        100_000,                    // Q8: Risk Wager
+        100_000,                    // Q9: Pressure Point
+        150_000,                    // Q10: Power Grid
+        100_000, 150_000,           // Q11–12: Power Play
+        150_000, 150_000,           // Q13–14: Final Buildup
+        250_000,                    // Q15: Survival — per-elimination award
+    ]
+
+    /// Question indices (0-based) where closest_number winner triggers the hot seat round.
+    static let hotSeatAfterClosest: [Int] = [3] // Q4 (index 3)
+
+    /// Correct-answer streak required to be eligible for the steal round.
+    static let stealStreakThreshold = 3
+    /// Reduced threshold when 4+ players are in the game.
+    static let stealStreakThresholdLarge = 2
+
+    /// Special round types keyed by 0-indexed question position.
+    static let partySpecialRounds: [Int: String] = [
+        5: "auction",  // Q6
+        7: "wager",    // Q8
+    ]
+
+    /// Question indices before which the avatar offers a bribe opportunity.
+    static let partyBribeBefore: [Int] = [4, 8, 12]
 
     // MARK: - Daily Login Streak
 

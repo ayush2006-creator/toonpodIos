@@ -11,8 +11,8 @@ struct GameScreen: View {
     @State private var showSwapDialog = false
     @State private var swapTopic = ""
     @State private var isSwapping = false
-    @State private var showSkipButton = false
     @State private var voiceToggle = false
+    @State private var isMatchingAnswer = false
 
     var body: some View {
         ZStack {
@@ -80,30 +80,22 @@ struct GameScreen: View {
                         feedbackView(feedback)
                     }
                 }
-                // Skip button overlay (bottom-right of avatar area)
-                .overlay(alignment: .bottomTrailing) {
-                    if showSkipButton && avatarVM.isSpeaking {
-                        Button {
-                            avatarVM.stopSpeaking()
-                        } label: {
-                            HStack(spacing: 4) {
-                                Image(systemName: "forward.fill")
-                                    .font(.caption2)
-                                Text("Skip")
-                                    .font(.caption)
-                                    .fontWeight(.medium)
-                            }
-                            .foregroundColor(.white.opacity(0.7))
-                            .padding(.horizontal, 12)
-                            .padding(.vertical, 8)
-                            .background(Color.black.opacity(0.5))
-                            .cornerRadius(20)
-                        }
-                        .padding(.trailing, 20)
-                        .padding(.bottom, 80)
-                        .transition(.opacity)
-                    }
-                }
+            }
+
+            // ── DEBUG: speech recognition overlay ──────────────────
+            VStack {
+                Spacer()
+                SpeechDebugOverlay(
+                    isAuthorized: speechService.isAuthorized,
+                    isAvailable: speechService.isAvailable,
+                    isListening: speechService.isListening,
+                    lastError: speechService.lastError,
+                    partialTranscript: speechService.transcript,
+                    lastFinalTranscript: avatarVM.userTranscript,
+                    gamePhase: avatarVM.gamePhase.debugLabel
+                )
+                .padding(.horizontal, 12)
+                .padding(.bottom, 6)
             }
         }
         .navigationBarBackButtonHidden(true)
@@ -159,8 +151,20 @@ struct GameScreen: View {
             avatarVM.voiceEnabled = voiceToggle
             if voiceToggle {
                 speechService.requestAuthorization()
+                // If already authorized and in the right phase, restart immediately.
+                // Handles toggling the mic off and back on during the same question.
+                if speechService.isAuthorized && avatarVM.gamePhase == .waitingForAnswer {
+                    startVoiceInput()
+                }
             } else {
                 stopVoiceInput()
+            }
+        }
+        // When authorization is granted (possibly after the initial startVoiceInput call),
+        // automatically start the mic if voice mode is active and the avatar is waiting.
+        .onChange(of: speechService.isAuthorized) { authorized in
+            if authorized && voiceToggle && avatarVM.gamePhase == .waitingForAnswer {
+                startVoiceInput()
             }
         }
         .task {
@@ -173,6 +177,14 @@ struct GameScreen: View {
 
             // Request speech auth early if voice was enabled
             speechService.requestAuthorization()
+
+            // Wait for the intro animation to complete before the avatar speaks.
+            // SwiftUI creates the view (firing .task) during the navigation push
+            // animation, so without this guard the avatar would speak while the
+            // previous screen is still visible.
+            while showIntro {
+                try? await Task.sleep(nanoseconds: 100_000_000) // poll every 100ms
+            }
 
             // Run the game orchestration
             await runGameFlow()
@@ -200,10 +212,12 @@ struct GameScreen: View {
     private func runAskQuestion() async {
         guard let question = gameVM.currentQuestion else { return }
 
-        // Show skip button after delay
-        showSkipButton = false
-        DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
-            showSkipButton = true
+        // Pre-warm the server embedding cache for this question's options.
+        // This fires while the avatar is reading the question so Layer 1 (fast cosine
+        // similarity) is ready before the user speaks — avoiding the slower DeepSeek fallback.
+        let optionsToWarm = getAnswerOptions(for: question)
+        if !optionsToWarm.isEmpty {
+            APIService.shared.precomputeEmbeddings(options: optionsToWarm)
         }
 
         // Avatar reads the question aloud
@@ -212,8 +226,6 @@ struct GameScreen: View {
             number: gameVM.currentQ + 1,
             prize: gameVM.currentPrize
         )
-
-        showSkipButton = false
 
         // Start timer when avatar finishes asking
         gameVM.startTimer()
@@ -232,9 +244,22 @@ struct GameScreen: View {
 
         // Set up transcript handler for answer matching
         speechService.onTranscript = { [weak gameVM, weak avatarVM] transcript in
-            guard let gameVM, let avatarVM else { return }
-            guard avatarVM.gamePhase == .waitingForAnswer else { return }
-            guard !gameVM.answerRevealed else { return }
+            guard let gameVM, let avatarVM else {
+                print("[Voice] onTranscript: gameVM or avatarVM is nil")
+                return
+            }
+            guard avatarVM.gamePhase == .waitingForAnswer else {
+                print("[Voice] onTranscript: wrong phase '\(avatarVM.gamePhase)' for '\(transcript)'")
+                return
+            }
+            guard !gameVM.answerRevealed else {
+                print("[Voice] onTranscript: answer already revealed, skipping '\(transcript)'")
+                return
+            }
+            guard !isMatchingAnswer else {
+                print("[Voice] onTranscript: match in progress, ignoring '\(transcript)'")
+                return
+            }
 
             // Show user transcript
             avatarVM.userTranscript = transcript
@@ -244,26 +269,75 @@ struct GameScreen: View {
                 }
             }
 
-            // Get answer options for current question
-            guard let question = gameVM.currentQuestion else { return }
-            let options = getAnswerOptions(for: question)
-            guard !options.isEmpty else { return }
+            guard let question = gameVM.currentQuestion else {
+                print("[Voice] onTranscript: no current question")
+                return
+            }
 
-            // Match answer
+            // fill_4th: free-text answer — bypass option matching, verify directly
+            if question.type == .fill4th {
+                guard !isMatchingAnswer else { return }
+                isMatchingAnswer = true
+                Task {
+                    defer { isMatchingAnswer = false }
+                    let answer = transcript.trimmingCharacters(in: .whitespaces)
+                    guard !answer.isEmpty else { return }
+                    let q = question.data
+                    let items = [q.option1, q.option2, q.option3]
+                        .compactMap { $0 }.filter { !$0.isEmpty }
+                    var isCorrect = false
+                    do {
+                        let result = try await APIService.shared.verifyFill4th(
+                            answer: answer, items: items, connection: q.connection ?? "")
+                        isCorrect = result.valid
+                    } catch {
+                        // Fallback: check sample_answers list
+                        let samples = (q.sampleAnswers ?? "").lowercased()
+                            .components(separatedBy: ",")
+                            .map { $0.trimmingCharacters(in: .whitespaces) }
+                        isCorrect = samples.contains { !$0.isEmpty && answer.lowercased().contains($0) }
+                    }
+                    guard avatarVM.gamePhase == .waitingForAnswer, !gameVM.answerRevealed else { return }
+                    SpeechService.shared.stopListening()
+                    let fact = q.interestingFact ?? ""
+                    await MainActor.run {
+                        gameVM.voiceSelectedAnswer = answer
+                        handleAnswer(isCorrect: isCorrect, fact: fact, options: FinishQuestionOptions(selectedText: answer))
+                    }
+                }
+                return
+            }
+
+            let options = getAnswerOptions(for: question)
+            guard !options.isEmpty else {
+                print("[Voice] onTranscript: empty options for type '\(question.type)'")
+                return
+            }
+
+            print("[Voice] Starting match: '\(transcript)' against \(options)")
+            isMatchingAnswer = true
+
             Task {
+                defer { isMatchingAnswer = false }
+
                 if let match = await SpeechService.shared.matchAnswer(transcript: transcript, options: options) {
-                    // Find if this is the correct answer
-                    let correct = getCorrectAnswer(for: question)
-                    let isCorrect = match.lowercased() == correct.lowercased()
+                    guard avatarVM.gamePhase == .waitingForAnswer, !gameVM.answerRevealed else {
+                        print("[Voice] Match found '\(match)' but phase changed — discarding")
+                        return
+                    }
+
+                    print("[Voice] Matched '\(match)' — submitting answer")
+                    let isCorrect = isAnswerCorrect(match: match, question: question)
                     let fact = question.data.interestingFact ?? question.interestingFact ?? ""
 
-                    // Stop listening during answer processing
                     SpeechService.shared.stopListening()
 
-                    // Process the answer
                     await MainActor.run {
-                        handleAnswer(isCorrect: isCorrect, fact: fact, options: FinishQuestionOptions())
+                        gameVM.voiceSelectedAnswer = match
+                        handleAnswer(isCorrect: isCorrect, fact: fact, options: FinishQuestionOptions(selectedText: match))
                     }
+                } else {
+                    print("[Voice] matchAnswer returned nil for '\(transcript)' — mic stays active")
                 }
             }
         }
@@ -274,6 +348,7 @@ struct GameScreen: View {
     private func stopVoiceInput() {
         speechService.stopListening()
         speechService.onTranscript = nil
+        isMatchingAnswer = false
     }
 
     // MARK: - Answer Option Extraction
@@ -283,15 +358,27 @@ struct GameScreen: View {
         case .fourOptions:
             return [question.data.optionA, question.data.optionB, question.data.optionC, question.data.optionD]
                 .compactMap { $0 }.filter { !$0.isEmpty }
+
         case .whichIs:
-            return [question.data.option1 ?? question.data.optionA,
-                    question.data.option2 ?? question.data.optionB]
+            let q = question.data
+            // Prefer explicit A/B fields (note: which_is uses option_a/b, not option_1/2)
+            let fromFields = [q.optionA, q.optionB]
                 .compactMap { $0 }.filter { !$0.isEmpty }
+            if fromFields.count == 2 { return fromFields }
+            // Fallback: options embedded in query text "…: optA or optB?"
+            let parsed = q.whichIsOptionsFromQuery
+            return parsed.count == 2 ? parsed : fromFields
+
         case .beforeAfterBinary:
             return ["Before", "After"]
+
         case .oddOneOut:
-            return [question.data.option1, question.data.option2, question.data.option3, question.data.option4]
+            let q = question.data
+            // Backend sends option1…option4 (no underscore) for odd_one_out
+            let opts = [q.option1, q.option2, q.option3, q.option4]
                 .compactMap { $0 }.filter { !$0.isEmpty }
+            return opts
+
         default:
             return question.options ?? []
         }
@@ -299,6 +386,34 @@ struct GameScreen: View {
 
     private func getCorrectAnswer(for question: Question) -> String {
         question.data.correctOption ?? question.data.correctAnswer ?? question.answer ?? ""
+    }
+
+    /// Per-type correctness check that mirrors each renderer's handleTap logic.
+    /// The `match` string is the full option text returned by the API or local fuzzy match.
+    private func isAnswerCorrect(match: String, question: Question) -> Bool {
+        let data = question.data
+        let matchLower = match.lowercased()
+
+        switch question.type {
+        case .fourOptions, .pictureChoice:
+            // correctOption is the full text of the correct answer (mirrors web FourOptionsRenderer)
+            return matchLower == (data.correctOption ?? "").lowercased()
+
+        case .whichIs:
+            let correct = (data.correctAnswer ?? "").lowercased()
+            // WhichIsRenderer uses substring matching
+            return matchLower.contains(correct) || correct.contains(matchLower)
+
+        case .beforeAfterBinary:
+            return matchLower == (data.correctAnswer ?? "").lowercased()
+
+        case .oddOneOut:
+            return matchLower == (data.correctAnswer ?? "").lowercased()
+
+        default:
+            let correct = (data.correctOption ?? data.correctAnswer ?? question.answer ?? "").lowercased()
+            return matchLower == correct
+        }
     }
 
     // MARK: - Loading
@@ -1092,5 +1207,89 @@ struct SwapDialogView: View {
             }
             .padding(.top, 20)
         }
+    }
+}
+
+// MARK: - DEBUG: Speech Recognition Overlay
+
+extension GamePhase {
+    var debugLabel: String {
+        switch self {
+        case .idle:             return "idle"
+        case .briefing:         return "briefing"
+        case .askingQuestion:   return "asking"
+        case .waitingForAnswer: return "WAITING ✓"
+        case .suspense:         return "suspense"
+        case .revealingAnswer:  return "revealing"
+        case .reacting:         return "reacting"
+        case .explaining:       return "explaining"
+        case .transitioning:    return "transitioning"
+        case .gameFarewell:     return "farewell"
+        }
+    }
+}
+
+struct SpeechDebugOverlay: View {
+    let isAuthorized: Bool
+    let isAvailable: Bool
+    let isListening: Bool
+    let lastError: String
+    let partialTranscript: String
+    let lastFinalTranscript: String
+    let gamePhase: String
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 3) {
+            // Row 1: auth / mic / phase
+            HStack(spacing: 6) {
+                Label(isAuthorized ? "Auth ✓" : "Auth ✗",
+                      systemImage: isAuthorized ? "checkmark.shield.fill" : "xmark.shield.fill")
+                    .foregroundColor(isAuthorized ? .green : .red)
+                Label(isAvailable ? "ASR ✓" : "ASR ✗",
+                      systemImage: "waveform")
+                    .foregroundColor(isAvailable ? .green : .red)
+                Label(isListening ? "Mic ON" : "Mic OFF",
+                      systemImage: isListening ? "mic.fill" : "mic.slash.fill")
+                    .foregroundColor(isListening ? .green : .orange)
+                Spacer()
+                Text(gamePhase)
+                    .foregroundColor(.yellow)
+            }
+            .font(.system(size: 11, weight: .medium, design: .monospaced))
+
+            // Row 2: last error (if any)
+            if !lastError.isEmpty {
+                Text("ERR: \(lastError)")
+                    .foregroundColor(.red)
+                    .font(.system(size: 10, design: .monospaced))
+                    .lineLimit(2)
+            }
+
+            // Row 3: live partial transcript
+            if !partialTranscript.isEmpty {
+                HStack(spacing: 4) {
+                    Text("▶").foregroundColor(.cyan)
+                    Text(partialTranscript).foregroundColor(.white).lineLimit(2)
+                }
+                .font(.system(size: 12, weight: .medium, design: .monospaced))
+            }
+
+            // Row 4: last matched final transcript
+            if !lastFinalTranscript.isEmpty {
+                HStack(spacing: 4) {
+                    Text("✓").foregroundColor(.green)
+                    Text(lastFinalTranscript).foregroundColor(.green).lineLimit(1)
+                }
+                .font(.system(size: 12, weight: .medium, design: .monospaced))
+            }
+        }
+        .padding(.horizontal, 10)
+        .padding(.vertical, 7)
+        .background(Color.black.opacity(0.75))
+        .cornerRadius(8)
+        .overlay(
+            RoundedRectangle(cornerRadius: 8)
+                .stroke(Color.white.opacity(0.15), lineWidth: 1)
+        )
     }
 }

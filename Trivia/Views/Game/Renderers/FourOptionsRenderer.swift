@@ -4,6 +4,8 @@ struct FourOptionsRenderer: View {
     let question: Question
     let revealed: Bool
     let fiftyEliminated: [Int]
+    var hotSeatPlayerAnswer: String? = nil
+    var voiceSelected: String? = nil
     let onAnswer: (Bool, String, FinishQuestionOptions) -> Void
 
     @State private var locked = false
@@ -24,15 +26,21 @@ struct FourOptionsRenderer: View {
         VStack(spacing: 10) {
             ForEach(0..<4, id: \.self) { i in
                 let eliminated = fiftyEliminated.contains(i)
-                let showReveal = revealed && selectedIdx != nil
+                let isVoicePick = voiceSelected != nil && options[i] == voiceSelected
+                let isTapPick = selectedIdx == i
+                let isHotSeat = hotSeatPlayerAnswer != nil && options[i] == hotSeatPlayerAnswer
+                // Reveal when tap or voice (or hotSeat) selected AND answer is revealed
+                let showReveal = revealed && (selectedIdx != nil || voiceSelected != nil || hotSeatPlayerAnswer != nil)
+
+                let isWrongAns = showReveal && options[i] != correctOption && (isTapPick || isVoicePick || isHotSeat)
 
                 AnswerButton(
                     text: options[i],
                     optionLabel: labels[i],
-                    selected: selectedIdx == i && !showReveal,
+                    selected: (isTapPick || isVoicePick || isHotSeat) && !showReveal,
                     correct: showReveal && options[i] == correctOption,
-                    wrong: showReveal && selectedIdx == i && options[i] != correctOption,
-                    disabled: locked || eliminated,
+                    wrong: isWrongAns,
+                    disabled: locked || eliminated || voiceSelected != nil,
                     fiftyHidden: eliminated
                 ) {
                     handleTap(i)

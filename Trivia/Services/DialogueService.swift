@@ -91,6 +91,9 @@ enum Dialogue {
 
         case .pictureChoice:
             return queryText
+
+        case .elimination:
+            return queryText
         }
     }
 
@@ -222,5 +225,6 @@ func typeLabel(_ type: QuestionType) -> String {
     case .hiddenTimer: return "Hidden Timer"
     case .closestNumber: return "Closest Number"
     case .pictureChoice: return "Picture Choice"
+    case .elimination: return "Elimination"
     }
 }

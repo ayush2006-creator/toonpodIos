@@ -14,4 +14,10 @@ enum ScoringService {
         if streak >= 3 { return Int(round(Double(prize) * 0.1)) }
         return 0
     }
+
+    /// Apply the daily login streak multiplier to a base prize. Returns the bonus amount (0 if multiplier is 1x).
+    static func calcLoginStreakBonus(prize: Int, multiplier: Double) -> Int {
+        guard multiplier > 1.0 else { return 0 }
+        return Int(round(Double(prize) * (multiplier - 1.0)))
+    }
 }

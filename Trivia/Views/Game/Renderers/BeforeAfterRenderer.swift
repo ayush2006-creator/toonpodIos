@@ -3,6 +3,7 @@ import SwiftUI
 struct BeforeAfterRenderer: View {
     let question: Question
     let revealed: Bool
+    var voiceSelected: String? = nil
     let onAnswer: (Bool, String, FinishQuestionOptions) -> Void
 
     @State private var locked = false
@@ -17,14 +18,16 @@ struct BeforeAfterRenderer: View {
     var body: some View {
         HStack(spacing: 12) {
             ForEach(0..<2, id: \.self) { i in
-                let showReveal = revealed && selectedIdx != nil
+                let isVoicePick = voiceSelected != nil && options[i].lowercased() == voiceSelected?.lowercased()
+                let isTapPick = selectedIdx == i
+                let showReveal = revealed && (selectedIdx != nil || voiceSelected != nil)
 
                 AnswerButton(
                     text: options[i],
-                    selected: selectedIdx == i && !showReveal,
+                    selected: (isTapPick || isVoicePick) && !showReveal,
                     correct: showReveal && options[i].lowercased() == correctAnswer,
-                    wrong: showReveal && selectedIdx == i && options[i].lowercased() != correctAnswer,
-                    disabled: locked
+                    wrong: showReveal && (isTapPick || isVoicePick) && options[i].lowercased() != correctAnswer,
+                    disabled: locked || voiceSelected != nil
                 ) {
                     handleTap(i)
                 }

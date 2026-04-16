@@ -109,6 +109,19 @@ actor APIService {
         return result.match
     }
 
+    /// Pre-warms the server-side OpenAI embedding cache for a set of answer options.
+    /// Call this as soon as a question is displayed so the embedding layer is ready
+    /// before the user speaks — avoiding a slow DeepSeek fallback call at answer time.
+    func precomputeEmbeddings(options: [String]) {
+        guard !options.isEmpty else { return }
+        Task {
+            guard let url = URL(string: "\(baseURL)/api/precompute-embeddings") else { return }
+            let body: [String: Any] = ["options": options]
+            let request = makePostRequest(url: url, body: body)
+            _ = try? await URLSession.shared.data(for: request)
+        }
+    }
+
     // MARK: - Verify Fill 4th
 
     func verifyFill4th(answer: String, items: [String], connection: String) async throws -> Fill4thVerifyResponse {
@@ -202,16 +215,6 @@ actor APIService {
         if httpResponse?.statusCode == 409 { return nil }
         guard httpResponse?.statusCode == 200 else { return nil }
         return try decoder.decode(VerifyPaymentResponse.self, from: data)
-    }
-
-    // MARK: - Precompute Embeddings (fire and forget)
-
-    func precomputeEmbeddings(options: [String]) {
-        Task {
-            let url = URL(string: "\(baseURL)/api/precompute-embeddings")!
-            let request = makePostRequest(url: url, body: ["options": options])
-            _ = try? await URLSession.shared.data(for: request)
-        }
     }
 
     // MARK: - Helpers

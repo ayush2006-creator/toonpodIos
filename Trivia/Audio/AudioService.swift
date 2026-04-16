@@ -74,6 +74,15 @@ class AudioService: ObservableObject {
 
     func playAudioData(_ data: Data) throws {
         player?.stop()
+
+        // Fire any pending speech-complete callback before starting new audio.
+        // This unblocks any speakAloud continuation that was waiting for the
+        // previous playback to finish (prevents CheckedContinuation leaks when
+        // a new speak interrupts an in-progress one).
+        let pending = onSpeechComplete
+        onSpeechComplete = nil
+        pending?()
+
         player = try AVAudioPlayer(data: data)
         player?.delegate = AudioPlayerDelegate.shared
         player?.prepareToPlay()
@@ -230,7 +239,15 @@ class AudioService: ObservableObject {
         }
     }
 
-    /// Checks if a transcript is likely an echo of recent avatar speech (>50% word overlap).
+    /// Clears the avatar word cache. Call when the avatar finishes speaking a
+    /// question so the user's answer words aren't falsely flagged as echoes.
+    func clearAvatarWords() {
+        avatarWordTimers.values.forEach { $0.cancel() }
+        avatarWordTimers.removeAll()
+        recentAvatarWords.removeAll()
+    }
+
+    /// Checks if a transcript is likely an echo of recent avatar speech (>70% word overlap).
     func isAvatarEcho(_ transcript: String) -> Bool {
         guard !recentAvatarWords.isEmpty else { return false }
         let words = transcript.lowercased()
@@ -239,7 +256,9 @@ class AudioService: ObservableObject {
         guard !words.isEmpty else { return false }
 
         let overlap = words.filter { recentAvatarWords.contains($0) }.count
-        return Double(overlap) / Double(words.count) > 0.5
+        // Raised threshold to 0.7 so single answer words ("before", "after")
+        // aren't blocked just because they appeared in the question text.
+        return Double(overlap) / Double(words.count) > 0.7
     }
 
     // MARK: - Background Music

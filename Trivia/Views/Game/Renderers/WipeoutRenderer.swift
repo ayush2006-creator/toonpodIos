@@ -10,15 +10,15 @@ struct WipeoutRenderer: View {
     @State private var results: [String: String] = [:]
 
     private var correctSet: Set<String> {
-        Set((question.data.correctOptions ?? "").components(separatedBy: "|").map { $0.trimmingCharacters(in: .whitespaces) })
+        Set(question.data.wipeoutCorrectList)
     }
 
     private var allOptions: [String] {
-        // Use wipeout dynamic options (option_1 through option_9)
-        if !question.data.wipeoutOptions.isEmpty {
-            return question.data.wipeoutOptions
+        // Use numbered options (option_1 through option_9)
+        if !question.data.numberedOptions.isEmpty {
+            return question.data.numberedOptions
         }
-        // Fallback: use standard options
+        // Fallback: use standard A/B/C/D options
         let q = question.data
         return [q.optionA, q.optionB, q.optionC, q.optionD].compactMap { $0 }.filter { !$0.isEmpty }
     }
