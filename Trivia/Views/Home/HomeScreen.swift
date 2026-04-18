@@ -132,11 +132,11 @@ struct HomeScreen: View {
                     })
 
                     // Party Mode
-                    NavigationLink(value: AppRoute.avatar) {
+                    NavigationLink(value: AppRoute.partySetup) {
                         GameModeCard(
                             icon: "person.3.fill",
                             title: "Party Mode",
-                            subtitle: "2-5 players",
+                            subtitle: "2-6 players · voice buzz-in",
                             isPrimary: false,
                             badge: "Must Play"
                         )

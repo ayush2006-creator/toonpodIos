@@ -9,4 +9,6 @@ enum AppRoute: Hashable {
     case results
     case community
     case communityPlay(gameId: String)
+    case partySetup
+    case partyGame
 }

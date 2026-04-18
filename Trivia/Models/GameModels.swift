@@ -393,6 +393,105 @@ struct PartyPlayer: Identifiable, Codable {
     var score: Int
 }
 
+// MARK: - Party Round
+
+enum PartyRound: String, CaseIterable {
+    case preparation = "PREPARATION ROUND"
+    case main        = "MAIN ROUND"
+    case bonus       = "BONUS ROUND"
+    case finale      = "FINALE"
+}
+
+// MARK: - Special Round Type
+
+enum SpecialRoundType: String {
+    case auction, wager, steal, hotSeat = "hot_seat", gridReveal = "grid_reveal", elimination
+}
+
+// MARK: - Grid Reveal
+
+enum GridCellKind: String, CaseIterable {
+    case money, multiplier
+    case extraLife   = "extra_life"
+    case question
+    case steal
+    case skipTurn    = "skip_turn"
+    case loseLifeline = "lose_lifeline"
+    case bomb
+    case donate
+}
+
+struct GridCell: Identifiable {
+    let id = UUID()
+    var kind: GridCellKind
+    var amount: Int?
+    var factor: Double?   // for multiplier cells (2.0 or 3.0)
+    var questions: Int?   // multiplier duration
+}
+
+struct GridRevealState {
+    var phase: GridRevealPhase = .pick
+    var player: String
+    var cells: [GridCell] = []
+    var selectedIdx: Int? = nil
+    var revealedIdxs: Set<Int> = []
+    var result: GridCell? = nil
+    var targetPlayer: String? = nil
+}
+
+enum GridRevealPhase { case pick, revealSelected, cascade, playerSelect, result }
+
+// MARK: - Steal Round
+
+enum StealPhase { case offer, question, target, result }
+enum StealResult { case success, fail }
+
+struct StealState {
+    var phase: StealPhase = .offer
+    var thief: String
+    var victim: String? = nil
+    var amount: Int = 0
+    var question: Question? = nil
+    var correctOption: String? = nil
+    var result: StealResult? = nil
+}
+
+// MARK: - Hot Seat Round
+
+enum HotSeatPhase { case announce, sabotage, loading, question, result }
+
+struct HotSeatState {
+    var phase: HotSeatPhase = .announce
+    var player: String
+    var sabotage: [String: Int] = [:]
+    var questionText: String? = nil
+    var options: [String] = []
+    var correctOption: String? = nil
+    var playerAnswer: String? = nil
+    var isCorrect: Bool? = nil
+}
+
+// MARK: - Auction Round
+
+enum AuctionPhase { case bidding, closing, sold }
+
+struct AuctionState {
+    var bids: [String: Int] = [:]
+    var phase: AuctionPhase = .bidding
+    var winner: String? = nil
+}
+
+// MARK: - Elimination Round
+
+struct EliminationState {
+    var activePlayers: [String]
+    var prompt: String? = nil
+    var currentTurn: String? = nil
+    var usedAnswers: [String] = []
+    var justEliminated: String? = nil
+    var champion: String? = nil
+}
+
 // MARK: - Lifelines
 
 struct Lifelines {

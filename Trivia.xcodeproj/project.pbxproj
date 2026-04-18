@@ -272,6 +272,7 @@
 				DEVELOPMENT_TEAM = 4B85CPSF3Y;
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_KEY_NSCameraUsageDescription = "ToonTrivia uses the camera to detect raised hands for party mode buzz-in.";
 				INFOPLIST_KEY_NSMicrophoneUsageDescription = "ToonTrivia needs microphone access for voice answers during gameplay.";
 				INFOPLIST_KEY_NSSpeechRecognitionUsageDescription = "ToonTrivia uses speech recognition to match your spoken answers.";
 				"INFOPLIST_KEY_UIApplicationSceneManifest_Generation[sdk=iphoneos*]" = YES;
@@ -313,6 +314,7 @@
 				DEVELOPMENT_TEAM = 4B85CPSF3Y;
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_KEY_NSCameraUsageDescription = "ToonTrivia uses the camera to detect raised hands for party mode buzz-in.";
 				INFOPLIST_KEY_NSMicrophoneUsageDescription = "ToonTrivia needs microphone access for voice answers during gameplay.";
 				INFOPLIST_KEY_NSSpeechRecognitionUsageDescription = "ToonTrivia uses speech recognition to match your spoken answers.";
 				"INFOPLIST_KEY_UIApplicationSceneManifest_Generation[sdk=iphoneos*]" = YES;

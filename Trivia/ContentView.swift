@@ -2,6 +2,7 @@ import SwiftUI
 
 struct ContentView: View {
     @EnvironmentObject var gameVM: GameViewModel
+    @StateObject private var partyVM = PartyViewModel()
     @State private var navigationPath = NavigationPath()
 
     var body: some View {
@@ -25,6 +26,12 @@ struct ContentView: View {
                         CommunityScreen()
                     case .communityPlay:
                         GameScreen()
+                    case .partySetup:
+                        PartySetupScreen()
+                            .environmentObject(partyVM)
+                    case .partyGame:
+                        PartyGameScreen()
+                            .environmentObject(partyVM)
                     }
                 }
         }
