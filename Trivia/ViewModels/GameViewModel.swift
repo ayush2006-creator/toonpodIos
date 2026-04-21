@@ -29,6 +29,11 @@ class GameViewModel: ObservableObject {
     @Published var partyMode: Bool = false
     @Published var selectedAvatarId: String = "trixie"
 
+    // Community play — set when entering a community game so GameScreen skips
+    // the server question fetch and uses the preloaded gameData.
+    @Published var communityGameId: String?
+    @Published var communityGameTitle: String?
+
     // Party mode scoring
     /// Active score multiplier from a Grid Reveal cell (nil = no active multiplier).
     @Published var partyScoreMultiplier: PartyScoreMultiplier?
@@ -132,7 +137,23 @@ class GameViewModel: ObservableObject {
         elapsedTime = 0
         partyScoreMultiplier = nil
         specialRoundQuestion = nil
+        communityGameId = nil
+        communityGameTitle = nil
         _ = stopTimer()
+    }
+
+    /// Prepare state for a community game: bypasses `loadQuestions` by using
+    /// the preloaded Firestore questions, sets the questionSetId so save-score
+    /// can tag the entry, and marks community mode so GameScreen skips the
+    /// network fetch on appear.
+    func startCommunityGame(_ game: CommunityGame) {
+        resetGame(level: 0)
+        gameData = game.questions
+        questionSetId = game.id
+        communityGameId = game.id
+        communityGameTitle = game.title
+        selectedCategory = "community"
+        currentLevel = 0
     }
 
     func loadQuestions() async {

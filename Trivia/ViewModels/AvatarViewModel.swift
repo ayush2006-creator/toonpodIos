@@ -50,6 +50,15 @@ let appAvatars: [AvatarDefinition] = [
         yRotationDegrees: 0
     ),
     AvatarDefinition(
+        id: "soldier",
+        name: "Sarge",
+        personality: "Tough-as-nails drill sergeant. Barks questions, salutes correct answers, no mercy for slackers.",
+        modelFileName: "Soldier_Human",
+        voiceId: "onyx",
+        available: .everyone,
+        yRotationDegrees: 180   // Sketchfab export faces -Z; flip to face viewer
+    ),
+    AvatarDefinition(
         id: "sage",
         name: "Sage",
         personality: "Calm and wise. Explains answers like a favorite teacher with endless patience.",

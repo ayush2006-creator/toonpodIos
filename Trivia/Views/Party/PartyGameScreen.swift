@@ -7,14 +7,13 @@ struct PartyGameScreen: View {
     @EnvironmentObject var partyVM: PartyViewModel
     @EnvironmentObject var avatarVM: AvatarViewModel
     @StateObject private var speechService = SpeechService.shared
-    @StateObject private var faceDetector = CameraFaceDetector()
+    /// Camera used only during registration to capture each player's face x-position.
+    @StateObject private var registrationCamera = CameraHandDetector()
 
     // Registration phase
     @State private var registrationComplete = false
     @State private var registeringPlayerIndex = 0
     @State private var pendingName = ""
-    @State private var awaitingConfirm = false
-    @State private var detectedFaceRect: CGRect? = nil
 
     // Game phase
     @State private var showBuzzIn = false
@@ -141,7 +140,7 @@ struct PartyGameScreen: View {
             speechService.requestAuthorization()
 
             if partyVM.registrationPhase {
-                await runCameraRegistration()
+                await runRegistration()
             } else {
                 registrationComplete = true
                 await runPartyFlow()
@@ -154,43 +153,39 @@ struct PartyGameScreen: View {
     private var registrationView: some View {
         ZStack {
             // Camera feed or dark fallback
-            if let layer = faceDetector.previewLayer {
+            if let layer = registrationCamera.previewLayer {
                 CameraPreviewView(layer: layer)
                     .ignoresSafeArea()
             } else {
                 Color(hex: "1a0533").ignoresSafeArea()
             }
 
-            // Face bounding box + floating name label
+            // Live face bounding boxes from CameraHandDetector
             GeometryReader { geo in
-                if let faceRect = detectedFaceRect {
-                    let px = CGRect(
-                        x: faceRect.origin.x * geo.size.width,
-                        y: faceRect.origin.y * geo.size.height,
-                        width: faceRect.width * geo.size.width,
-                        height: faceRect.height * geo.size.height
-                    )
-
-                    Rectangle()
-                        .strokeBorder(Color.green, lineWidth: 2)
-                        .frame(width: px.width, height: px.height)
-                        .position(x: px.midX, y: px.midY)
-                        .animation(.easeOut(duration: 0.1), value: faceRect)
+                ForEach(registrationCamera.detectedFaces) { face in
+                    let cx = face.x * geo.size.width
+                    let cy = (1 - face.y) * geo.size.height
+                    let bw = face.width  * geo.size.width
+                    let bh = face.height * geo.size.height
 
                     let label = pendingName.isEmpty
                         ? "Player \(registeringPlayerIndex + 1)"
                         : pendingName
-                    let labelColor: Color = pendingName.isEmpty ? .green : .yellow
+                    let boxColor: Color = pendingName.isEmpty ? .green : .yellow
+
+                    RoundedRectangle(cornerRadius: 6)
+                        .strokeBorder(boxColor, lineWidth: 2)
+                        .frame(width: bw, height: bh)
+                        .position(x: cx, y: cy)
 
                     Text(label)
-                        .font(.system(size: 18, weight: .black))
+                        .font(.system(size: 16, weight: .black))
                         .foregroundColor(.black)
                         .padding(.horizontal, 10)
                         .padding(.vertical, 4)
-                        .background(labelColor)
+                        .background(boxColor)
                         .cornerRadius(8)
-                        .position(x: px.midX, y: max(px.minY - 24, 24))
-                        .animation(.easeOut(duration: 0.1), value: faceRect)
+                        .position(x: cx, y: max(cy - bh / 2 - 24, 20))
                 }
             }
 
@@ -387,53 +382,49 @@ struct PartyGameScreen: View {
         }
     }
 
-    // MARK: - Camera Registration Flow
+    // MARK: - Registration Flow
 
-    private func runCameraRegistration() async {
-        faceDetector.requestPermissionAndStart()
-        await avatarVM.speakAloud("Welcome to Party Mode! Step up one at a time to register.")
-        await registerNextFacePlayer()
+    private func runRegistration() async {
+        registrationCamera.requestPermissionAndStart()
+        await avatarVM.speakAloud("Welcome to Party Mode! Each player, step in front of the camera and say your name when asked.")
+        await registerNextPlayer()
     }
 
-    private func waitForFaceDetection() async -> CGRect {
-        return await withCheckedContinuation { continuation in
-            var resumed = false
-            faceDetector.onFaceStabilized = { rect in
-                guard !resumed else { return }
-                resumed = true
-                continuation.resume(returning: rect)
-            }
+    private func waitForFaceInFrame() async {
+        while registrationCamera.detectedFaces.isEmpty {
+            try? await Task.sleep(nanoseconds: 150_000_000)
         }
     }
 
-    private func registerNextFacePlayer() async {
+    private func registerNextPlayer() async {
         guard registeringPlayerIndex < partyVM.targetPlayerCount else {
-            faceDetector.stopSession()
+            registrationCamera.stopSession()
             partyVM.initPlayers(partyVM.registeredNames)
             registrationComplete = true
             await runPartyFlow()
             return
         }
 
-        await avatarVM.speakAloud("Player \(registeringPlayerIndex + 1), step in front of the camera.")
-        let faceRect = await waitForFaceDetection()
-        detectedFaceRect = faceRect
-
+        await avatarVM.speakAloud("Player \(registeringPlayerIndex + 1), look at the camera.")
+        await waitForFaceInFrame()
         await avatarVM.speakAloud("I see you! Say your name.")
+
         let name = await captureVoiceName()
         pendingName = name
+
+        // Capture face x-position while the player is right there
+        let faceX = registrationCamera.captureFacePosition()
 
         await avatarVM.speakAloud("I heard \(name). Say yes to confirm or no to try again.")
         let confirmed = await captureYesNo()
 
         if confirmed {
             partyVM.registeredNames.append(name)
+            if let faceX { partyVM.registerFacePosition(name, x: faceX) }
             registeringPlayerIndex += 1
         }
-        detectedFaceRect = nil
         pendingName = ""
-        faceDetector.resetRefireTimer()
-        await registerNextFacePlayer()
+        await registerNextPlayer()
     }
 
     private func captureVoiceName() async -> String {

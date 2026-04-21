@@ -43,6 +43,14 @@ class PartyViewModel: ObservableObject {
     @Published var registeredNames: [String] = []
     @Published var targetPlayerCount: Int = 2
 
+    /// Face x-positions (normalized 0-1) captured during voice registration.
+    /// Used by CameraHandDetector to identify who raised their hand.
+    @Published var playerFacePositions: [String: CGFloat] = [:]
+
+    func registerFacePosition(_ name: String, x: CGFloat) {
+        playerFacePositions[name] = x
+    }
+
     // MARK: - Round map (0-indexed question → new PartyRound starting at that Q)
 
     static let roundMap: [Int: PartyRound] = [
@@ -229,5 +237,6 @@ class PartyViewModel: ObservableObject {
         scoreMultiplier = nil
         registrationPhase = true
         registeredNames = []
+        playerFacePositions = [:]
     }
 }

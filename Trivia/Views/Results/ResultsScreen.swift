@@ -2,7 +2,9 @@ import SwiftUI
 
 struct ResultsScreen: View {
     @EnvironmentObject var gameVM: GameViewModel
+    @EnvironmentObject var auth: AuthService
     @Environment(\.dismiss) private var dismiss
+    @State private var didSaveScore = false
 
     var body: some View {
         ZStack {
@@ -116,6 +118,36 @@ struct ResultsScreen: View {
             }
         }
         .navigationBarBackButtonHidden(true)
+        .task {
+            guard !didSaveScore else { return }
+            didSaveScore = true
+
+            let mode: String
+            if gameVM.communityGameId != nil { mode = "community" }
+            else if gameVM.partyMode          { mode = "party" }
+            else                              { mode = "solo" }
+
+            let data = ScoreData(
+                level: gameVM.currentLevel,
+                winnings: gameVM.totalWinnings,
+                correct: gameVM.correctCount,
+                totalQs: gameVM.totalQuestions,
+                maxStreak: gameVM.maxStreak,
+                gameMode: mode
+            )
+            await auth.saveScore(
+                data: data,
+                questionSetId: gameVM.questionSetId,
+                category: gameVM.selectedCategory
+            )
+            if let cid = gameVM.communityGameId {
+                await auth.recordCommunityPlay(
+                    gameId: cid,
+                    winnings: gameVM.totalWinnings,
+                    correct: gameVM.correctCount
+                )
+            }
+        }
     }
 
     // MARK: - Computed

@@ -2,8 +2,10 @@ import SwiftUI
 
 struct HomeScreen: View {
     @EnvironmentObject var gameVM: GameViewModel
+    @EnvironmentObject var auth: AuthService
     @StateObject private var vm = HomeViewModel()
     @State private var showMenu = false
+    @Environment(\.scenePhase) private var scenePhase
 
     var body: some View {
         ZStack {
@@ -38,14 +40,14 @@ struct HomeScreen: View {
 
                     Spacer()
 
-                    if vm.isAuthenticated {
+                    if auth.isAuthenticated {
                         HStack(spacing: 12) {
                             Button {
                                 vm.showSparksSheet = true
                             } label: {
                                 HStack(spacing: 4) {
                                     Text("\u{26A1}")
-                                    Text(formatCompact(vm.sparksBalance).replacingOccurrences(of: "$", with: ""))
+                                    Text(formatCompact(auth.sparksBalance).replacingOccurrences(of: "$", with: ""))
                                         .fontWeight(.semibold)
                                 }
                                 .foregroundColor(.yellow)
@@ -54,10 +56,10 @@ struct HomeScreen: View {
                             Menu {
                                 Button("Settings") { vm.showSettingsSheet = true }
                                 Button("Feedback") { }
-                                Button("Sign Out", role: .destructive) { vm.isAuthenticated = false }
+                                Button("Sign Out", role: .destructive) { auth.signOut() }
                             } label: {
                                 HStack(spacing: 4) {
-                                    Text(vm.userName.isEmpty ? "Player" : vm.userName)
+                                    Text(auth.currentUser?.displayName.isEmpty == false ? auth.currentUser!.displayName : "Player")
                                         .foregroundColor(.white)
                                     Image(systemName: "chevron.down")
                                         .font(.caption)
@@ -199,6 +201,11 @@ struct HomeScreen: View {
         }
         .sheet(isPresented: $vm.showStreakSheet) {
             StreakSheet(streak: vm.loginStreak, title: vm.streakTitle)
+        }
+        .onChange(of: scenePhase) { _, newPhase in
+            if newPhase == .active, auth.isAuthenticated {
+                Task { await auth.refreshSparks() }
+            }
         }
     }
 }

@@ -2,8 +2,9 @@ import SwiftUI
 import AVFoundation
 
 /// Shown after the avatar asks a question.
-/// Uses the front camera + Vision hand-pose detection to identify who raised their hand.
-/// Falls back to tap buttons after 15 s if no hand is detected.
+/// Uses the front camera + Vision to detect raised hands (wrist above mouth + shoulder).
+/// Face bounding boxes are drawn live on the camera feed with player name labels.
+/// Falls back to tap buttons after 15 s or when voice keyword fires.
 struct BuzzInOverlay: View {
     @EnvironmentObject var partyVM: PartyViewModel
 
@@ -11,36 +12,37 @@ struct BuzzInOverlay: View {
     let onPlayerIdentified: (String) -> Void
     let onTimeout: () -> Void
 
-    // MARK: - Camera detector
-
     @StateObject private var camera = CameraHandDetector()
-
-    // MARK: - State
 
     @State private var showManualPicker = false
     @State private var secondsLeft: Int = 15
-    @State private var detectedName: String? = nil   // highlight name before confirming
-    @State private var confirming = false             // brief pause before auto-confirming
+    @State private var detectedName: String? = nil
+    @State private var confirming = false
 
     private let timer = Timer.publish(every: 1, on: .main, in: .common).autoconnect()
 
-    // MARK: - Body
-
     var body: some View {
-        ZStack {
-            // Camera background (fills the overlay area)
-            cameraLayer
+        GeometryReader { geo in
+            ZStack {
+                // ── Camera feed ──
+                cameraBackground
 
-            // Overlay content
-            VStack(spacing: 0) {
-                if showManualPicker {
-                    manualPickerView
-                } else {
-                    cameraHUDView
+                // ── Face bounding boxes ──
+                faceOverlay(geo: geo)
+
+                // ── HUD or manual picker ──
+                VStack(spacing: 0) {
+                    if showManualPicker {
+                        manualPickerView
+                    } else {
+                        cameraHUDView
+                    }
                 }
             }
+            .clipShape(RoundedRectangle(cornerRadius: 20))
         }
         .onAppear {
+            camera.playerFacePositions = partyVM.playerFacePositions
             camera.players = eligiblePlayers
             camera.onBuzzDetected = { name in
                 guard eligiblePlayers.contains(name), !confirming else { return }
@@ -55,147 +57,150 @@ struct BuzzInOverlay: View {
             if secondsLeft <= 0 { withAnimation { showManualPicker = true } }
         }
         .onChange(of: partyVM.buzzDetected) { detected in
-            // Also triggered by voice keyword detection in PartyGameScreen
-            if detected, !showManualPicker { withAnimation { showManualPicker = true } }
+            if detected, !confirming { withAnimation { showManualPicker = true } }
         }
     }
 
-    // MARK: - Camera Layer
+    // MARK: - Camera Background
 
     @ViewBuilder
-    private var cameraLayer: some View {
+    private var cameraBackground: some View {
         if let layer = camera.previewLayer {
             CameraPreviewView(layer: layer)
-                .clipShape(RoundedRectangle(cornerRadius: 20))
-                .overlay(
-                    // Semi-dark tint so UI remains readable
-                    RoundedRectangle(cornerRadius: 20)
-                        .fill(Color.black.opacity(0.45))
-                )
+                .overlay(Color.black.opacity(0.42))
         } else {
-            RoundedRectangle(cornerRadius: 20)
-                .fill(Color(hex: "1a0533").opacity(0.97))
+            Color(hex: "1a0533")
         }
     }
 
-    // MARK: - Camera HUD (waiting for hand raise)
+    // MARK: - Face Boxes Overlay
+
+    @ViewBuilder
+    private func faceOverlay(geo: GeometryProxy) -> some View {
+        let w = geo.size.width
+        let h = geo.size.height
+
+        ForEach(camera.detectedFaces) { face in
+            // Vision coords: origin bottom-left, y up → flip y for SwiftUI
+            let cx = face.x * w
+            let cy = (1 - face.y) * h
+            let bw = face.width  * w
+            let bh = face.height * h
+
+            let playerName = resolvedName(for: face)
+            let color = playerName.map { partyVM.color(for: $0) } ?? Color.white
+
+            // Face rectangle
+            RoundedRectangle(cornerRadius: 8)
+                .stroke(color, lineWidth: 2)
+                .frame(width: bw, height: bh)
+                .position(x: cx, y: cy)
+
+            // Name label above the box
+            if let name = playerName {
+                Text(name)
+                    .font(.system(size: 11, weight: .bold))
+                    .foregroundColor(.white)
+                    .padding(.horizontal, 6)
+                    .padding(.vertical, 3)
+                    .background(color.opacity(0.75))
+                    .cornerRadius(5)
+                    .position(x: cx, y: cy - bh / 2 - 14)
+            }
+        }
+    }
+
+    /// Resolves a face's detected x-position to a registered player name.
+    private func resolvedName(for face: DetectedFace) -> String? {
+        let positions = partyVM.playerFacePositions
+        guard !positions.isEmpty else { return nil }
+        return positions.min(by: { abs($0.value - face.x) < abs($1.value - face.x) })?.key
+    }
+
+    // MARK: - Camera HUD
 
     private var cameraHUDView: some View {
-        VStack(spacing: 20) {
+        VStack(spacing: 0) {
             Spacer()
 
-            // Detected player highlight
             if let name = detectedName {
                 detectedBadge(name)
             } else {
                 promptBadge
             }
 
-            // Player zone labels across the bottom
-            playerZoneBar
-
-            // Timer + fallback
+            // Countdown + fallback
             HStack {
                 Text("\(secondsLeft)s")
-                    .font(.system(size: 14, weight: .medium, design: .monospaced))
-                    .foregroundColor(.white.opacity(0.5))
+                    .font(.system(size: 13, weight: .medium, design: .monospaced))
+                    .foregroundColor(.white.opacity(0.45))
                 Spacer()
                 Button("Tap instead") {
                     withAnimation { showManualPicker = true }
                 }
                 .font(.caption)
-                .foregroundColor(.white.opacity(0.5))
+                .foregroundColor(.white.opacity(0.45))
             }
             .padding(.horizontal, 20)
-            .padding(.bottom, 16)
+            .padding(.vertical, 14)
         }
     }
 
     private var promptBadge: some View {
-        VStack(spacing: 8) {
+        VStack(spacing: 10) {
             Image(systemName: "hand.raised.fill")
-                .font(.system(size: 40))
+                .font(.system(size: 36))
                 .foregroundColor(.white.opacity(0.9))
             Text("Raise your hand to buzz in!")
-                .font(.title3)
-                .fontWeight(.bold)
+                .font(.title3).fontWeight(.bold)
                 .foregroundColor(.white)
                 .multilineTextAlignment(.center)
         }
         .padding(.horizontal, 24)
+        .padding(.vertical, 16)
+        .background(Color.black.opacity(0.45))
+        .cornerRadius(14)
+        .padding(.horizontal, 24)
     }
 
     private func detectedBadge(_ name: String) -> some View {
-        VStack(spacing: 8) {
+        VStack(spacing: 6) {
             Image(systemName: "hand.raised.fill")
-                .font(.system(size: 40))
+                .font(.system(size: 30))
                 .foregroundColor(partyVM.color(for: name))
             Text(name.uppercased())
-                .font(.system(size: 32, weight: .black))
+                .font(.system(size: 28, weight: .black))
                 .foregroundColor(partyVM.color(for: name))
             Text("is buzzing in!")
-                .font(.title3)
-                .foregroundColor(.white)
+                .font(.subheadline)
+                .foregroundColor(.white.opacity(0.9))
         }
         .padding(.horizontal, 24)
-        .padding(.vertical, 16)
-        .background(
-            RoundedRectangle(cornerRadius: 16)
-                .fill(Color.black.opacity(0.6))
-        )
+        .padding(.vertical, 14)
+        .background(Color.black.opacity(0.65))
+        .cornerRadius(16)
         .padding(.horizontal, 24)
     }
 
-    // Player name labels positioned proportionally across the bottom of the frame
-    private var playerZoneBar: some View {
-        GeometryReader { geo in
-            HStack(spacing: 0) {
-                ForEach(eligiblePlayers, id: \.self) { name in
-                    let isDetected = camera.detectedPlayer == name
-
-                    VStack(spacing: 4) {
-                        // Hand indicator dot
-                        Circle()
-                            .fill(isDetected
-                                  ? partyVM.color(for: name)
-                                  : partyVM.color(for: name).opacity(0.3))
-                            .frame(width: isDetected ? 14 : 8, height: isDetected ? 14 : 8)
-                            .animation(.easeInOut(duration: 0.2), value: isDetected)
-
-                        Text(name)
-                            .font(.system(size: 11, weight: .bold))
-                            .foregroundColor(isDetected ? partyVM.color(for: name) : .white.opacity(0.5))
-                            .lineLimit(1)
-                    }
-                    .frame(maxWidth: .infinity)
-                }
-            }
-            .frame(width: geo.size.width)
-        }
-        .frame(height: 44)
-        .padding(.horizontal, 12)
-    }
-
-    // MARK: - Manual Picker (fallback / voice-triggered)
+    // MARK: - Manual Picker
 
     private var manualPickerView: some View {
         VStack(spacing: 16) {
             Spacer()
             Text("Who buzzed?")
-                .font(.system(size: 26, weight: .black))
+                .font(.system(size: 24, weight: .black))
                 .foregroundColor(.white)
 
             VStack(spacing: 10) {
                 ForEach(eligiblePlayers, id: \.self) { name in
                     Button {
-                        onPlayerIdentified(name)
+                        handleDetection(name)
                     } label: {
                         Text(name)
-                            .font(.title2)
-                            .fontWeight(.bold)
+                            .font(.title2).fontWeight(.bold)
                             .foregroundColor(.white)
                             .frame(maxWidth: .infinity)
-                            .padding(.vertical, 16)
+                            .padding(.vertical, 14)
                             .background(partyVM.color(for: name))
                             .cornerRadius(14)
                     }
@@ -204,16 +209,16 @@ struct BuzzInOverlay: View {
             .padding(.horizontal, 32)
             .padding(.bottom, 24)
         }
-        .background(Color.black.opacity(0.5))
+        .background(Color.black.opacity(0.55))
     }
 
-    // MARK: - Detection Logic
+    // MARK: - Detection
 
     private func handleDetection(_ name: String) {
+        guard !confirming else { return }
         confirming = true
         withAnimation { detectedName = name }
 
-        // Brief visual confirmation (0.8 s), then auto-confirm
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.8) {
             camera.stopSession()
             onPlayerIdentified(name)

@@ -162,6 +162,7 @@ struct AvatarCard: View {
         case "trixie": return "👩"
         case "nova": return "🌟"
         case "rex": return "👨‍💼"
+        case "soldier": return "🪖"
         default: return "🧙"
         }
     }

@@ -143,11 +143,12 @@ struct Avatar3DContainer: UIViewRepresentable {
             do {
                 let entity = try await ModelEntity(contentsOf: url)
                 await MainActor.run {
-                    // Auto-scale to fit
+                    // Normalize by HEIGHT (Y) so every humanoid ends up the same
+                    // size regardless of T-pose arm span.
                     let bounds = entity.visualBounds(relativeTo: nil)
-                    let maxDim = max(bounds.extents.x, max(bounds.extents.y, bounds.extents.z))
-                    guard maxDim > 0 else { return }
-                    let scale = 1.5 / maxDim
+                    let height = bounds.extents.y
+                    guard height > 0 else { return }
+                    let scale = 1.5 / height
                     entity.scale = [scale, scale, scale]
 
                     // Center on ground

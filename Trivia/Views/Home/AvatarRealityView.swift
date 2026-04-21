@@ -130,11 +130,12 @@ struct AvatarRealityContainer: UIViewRepresentable {
             do {
                 let entity = try await ModelEntity(contentsOf: url)
                 await MainActor.run {
-                    // Auto-scale so tallest dimension = 1.5 units
+                    // Normalize by HEIGHT (Y) so every humanoid ends up the same
+                    // 1.5-unit height regardless of T-pose arm span or gear sticking out.
                     let bounds = entity.visualBounds(relativeTo: nil)
-                    let maxDim = max(bounds.extents.x, max(bounds.extents.y, bounds.extents.z))
-                    guard maxDim > 0 else { return }
-                    let scale = 1.5 / maxDim
+                    let height = bounds.extents.y
+                    guard height > 0 else { return }
+                    let scale = 1.5 / height
                     entity.scale = [scale, scale, scale]
 
                     // Sit on ground plane (y = 0)

@@ -172,8 +172,14 @@ struct GameScreen: View {
             if let avatar = appAvatars.first(where: { $0.id == gameVM.selectedAvatarId }) {
                 avatarVM.selectAvatar(avatar)
             }
-            gameVM.resetGame(level: gameVM.currentLevel)
-            await gameVM.loadQuestions()
+            if gameVM.communityGameId != nil {
+                // Community game: questions were preloaded by CommunityScreen.
+                // Skip the server fetch and start the timer directly.
+                gameVM.startTimer()
+            } else {
+                gameVM.resetGame(level: gameVM.currentLevel)
+                await gameVM.loadQuestions()
+            }
 
             // Request speech auth early if voice was enabled
             speechService.requestAuthorization()
